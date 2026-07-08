@@ -1,0 +1,14 @@
+.DS_Store
+
+# Xcode
+DerivedData/
+.derivedData*/
+Nightwing.app/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/

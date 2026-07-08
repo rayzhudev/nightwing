@@ -1,0 +1,710 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 63;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1A0000010000000000000001 /* NightwingIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000010000000000000011 /* NightwingIOSApp.swift */; };
+		1A0000010000000000000002 /* iPhoneRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000010000000000000012 /* iPhoneRootView.swift */; };
+		1A0000020000000000000001 /* NightwingMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000020000000000000011 /* NightwingMacApp.swift */; };
+		1A0000020000000000000002 /* MacRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000020000000000000012 /* MacRootView.swift */; };
+		1A0000030000000000001011 /* LibraryAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000011 /* LibraryAvailability.swift */; };
+		1A0000030000000000001012 /* Track.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000012 /* Track.swift */; };
+		1A0000030000000000001013 /* Album.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000013 /* Album.swift */; };
+		1A0000030000000000001014 /* Artist.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000014 /* Artist.swift */; };
+		1A0000030000000000001015 /* Playlist.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000015 /* Playlist.swift */; };
+		1A0000030000000000001016 /* FolderSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000016 /* FolderSource.swift */; };
+		1A0000030000000000001017 /* AudioFileType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000017 /* AudioFileType.swift */; };
+		1A0000030000000000001018 /* LocalLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000018 /* LocalLibrary.swift */; };
+		1A0000030000000000001019 /* PlaybackQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000019 /* PlaybackQueue.swift */; };
+		1A000003000000000000101A /* PlaybackProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001A /* PlaybackProfile.swift */; };
+		1A000003000000000000101B /* PlaybackState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001B /* PlaybackState.swift */; };
+		1A000003000000000000101C /* PlayerEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001C /* PlayerEngine.swift */; };
+		1A000003000000000000101D /* LibraryImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001D /* LibraryImportService.swift */; };
+		1A000003000000000000101E /* JSONLocalLibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001E /* JSONLocalLibraryStore.swift */; };
+		1A000003000000000000101F /* NightwingReusableViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001F /* NightwingReusableViews.swift */; };
+		1A0000030000000000001020 /* NightwingSampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000020 /* NightwingSampleData.swift */; };
+		1A0000030000000000001021 /* URL+NightwingLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000021 /* URL+NightwingLibrary.swift */; };
+		1A0000030000000000002011 /* LibraryAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000011 /* LibraryAvailability.swift */; };
+		1A0000030000000000002012 /* Track.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000012 /* Track.swift */; };
+		1A0000030000000000002013 /* Album.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000013 /* Album.swift */; };
+		1A0000030000000000002014 /* Artist.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000014 /* Artist.swift */; };
+		1A0000030000000000002015 /* Playlist.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000015 /* Playlist.swift */; };
+		1A0000030000000000002016 /* FolderSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000016 /* FolderSource.swift */; };
+		1A0000030000000000002017 /* AudioFileType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000017 /* AudioFileType.swift */; };
+		1A0000030000000000002018 /* LocalLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000018 /* LocalLibrary.swift */; };
+		1A0000030000000000002019 /* PlaybackQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000019 /* PlaybackQueue.swift */; };
+		1A000003000000000000201A /* PlaybackProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001A /* PlaybackProfile.swift */; };
+		1A000003000000000000201B /* PlaybackState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001B /* PlaybackState.swift */; };
+		1A000003000000000000201C /* PlayerEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001C /* PlayerEngine.swift */; };
+		1A000003000000000000201D /* LibraryImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001D /* LibraryImportService.swift */; };
+		1A000003000000000000201E /* JSONLocalLibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001E /* JSONLocalLibraryStore.swift */; };
+		1A000003000000000000201F /* NightwingReusableViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001F /* NightwingReusableViews.swift */; };
+		1A0000030000000000002020 /* NightwingSampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000020 /* NightwingSampleData.swift */; };
+		1A0000030000000000002021 /* URL+NightwingLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000021 /* URL+NightwingLibrary.swift */; };
+		1A0000040000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000040000000000000011 /* Assets.xcassets */; };
+		1A0000060000000000002001 /* OnlineSearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000060000000000000011 /* OnlineSearchResult.swift */; };
+		1A0000060000000000002002 /* YtDlpDownloadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000060000000000000012 /* YtDlpDownloadService.swift */; };
+		1A0000060000000000002003 /* YTDownloadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000060000000000000013 /* YTDownloadStore.swift */; };
+		1A0000060000000000002004 /* yt-dlp in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000060000000000000014 /* yt-dlp */; };
+		1A0000050000000000000001 /* Icon-20.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000050000000000000011 /* Icon-20.png */; };
+		1A0000050000000000000002 /* Icon-20@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000050000000000000012 /* Icon-20@2x.png */; };
+		1A0000050000000000000003 /* Icon-20@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000050000000000000013 /* Icon-20@3x.png */; };
+		1A0000050000000000000004 /* Icon-29.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000050000000000000014 /* Icon-29.png */; };
+		1A0000050000000000000005 /* Icon-29@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000050000000000000015 /* Icon-29@2x.png */; };
+		1A0000050000000000000006 /* Icon-29@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000050000000000000016 /* Icon-29@3x.png */; };
+		1A0000050000000000000007 /* Icon-40.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000050000000000000017 /* Icon-40.png */; };
+		1A0000050000000000000008 /* Icon-40@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000050000000000000018 /* Icon-40@2x.png */; };
+		1A0000050000000000000009 /* Icon-40@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000050000000000000019 /* Icon-40@3x.png */; };
+		1A000005000000000000000A /* Icon-60@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A000005000000000000001A /* Icon-60@2x.png */; };
+		1A000005000000000000000B /* Icon-60@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A000005000000000000001B /* Icon-60@3x.png */; };
+		1A000005000000000000000C /* Icon-76.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A000005000000000000001C /* Icon-76.png */; };
+		1A000005000000000000000D /* Icon-76@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A000005000000000000001D /* Icon-76@2x.png */; };
+		1A000005000000000000000E /* Icon-83.5@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A000005000000000000001E /* Icon-83.5@2x.png */; };
+		1A000005000000000000000F /* Icon-1024.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A000005000000000000001F /* Icon-1024.png */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1A0000010000000000000011 /* NightwingIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightwingIOSApp.swift; sourceTree = "<group>"; };
+		1A0000010000000000000012 /* iPhoneRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iPhoneRootView.swift; sourceTree = "<group>"; };
+		1A0000010000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1A00000100000000000000F1 /* Nightwing iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Nightwing iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A0000020000000000000011 /* NightwingMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightwingMacApp.swift; sourceTree = "<group>"; };
+		1A0000020000000000000012 /* MacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootView.swift; sourceTree = "<group>"; };
+		1A00000200000000000000F1 /* Nightwing macOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Nightwing macOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A0000030000000000000011 /* LibraryAvailability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryAvailability.swift; sourceTree = "<group>"; };
+		1A0000030000000000000012 /* Track.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Track.swift; sourceTree = "<group>"; };
+		1A0000030000000000000013 /* Album.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Album.swift; sourceTree = "<group>"; };
+		1A0000030000000000000014 /* Artist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Artist.swift; sourceTree = "<group>"; };
+		1A0000030000000000000015 /* Playlist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Playlist.swift; sourceTree = "<group>"; };
+		1A0000030000000000000016 /* FolderSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderSource.swift; sourceTree = "<group>"; };
+		1A0000030000000000000017 /* AudioFileType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFileType.swift; sourceTree = "<group>"; };
+		1A0000030000000000000018 /* LocalLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalLibrary.swift; sourceTree = "<group>"; };
+		1A0000030000000000000019 /* PlaybackQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackQueue.swift; sourceTree = "<group>"; };
+		1A000003000000000000001A /* PlaybackProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackProfile.swift; sourceTree = "<group>"; };
+		1A000003000000000000001B /* PlaybackState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackState.swift; sourceTree = "<group>"; };
+		1A000003000000000000001C /* PlayerEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerEngine.swift; sourceTree = "<group>"; };
+		1A000003000000000000001D /* LibraryImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryImportService.swift; sourceTree = "<group>"; };
+		1A000003000000000000001E /* JSONLocalLibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLocalLibraryStore.swift; sourceTree = "<group>"; };
+		1A000003000000000000001F /* NightwingReusableViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightwingReusableViews.swift; sourceTree = "<group>"; };
+		1A0000030000000000000020 /* NightwingSampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightwingSampleData.swift; sourceTree = "<group>"; };
+		1A0000030000000000000021 /* URL+NightwingLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "URL+NightwingLibrary.swift"; sourceTree = "<group>"; };
+		1A0000040000000000000011 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1A0000060000000000000011 /* OnlineSearchResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineSearchResult.swift; sourceTree = "<group>"; };
+		1A0000060000000000000012 /* YtDlpDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YtDlpDownloadService.swift; sourceTree = "<group>"; };
+		1A0000060000000000000013 /* YTDownloadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YTDownloadStore.swift; sourceTree = "<group>"; };
+		1A0000060000000000000014 /* yt-dlp */ = {isa = PBXFileReference; lastKnownFileType = file; path = "yt-dlp"; sourceTree = "<group>"; };
+		1A0000050000000000000011 /* Icon-20.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-20.png"; sourceTree = "<group>"; };
+		1A0000050000000000000012 /* Icon-20@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-20@2x.png"; sourceTree = "<group>"; };
+		1A0000050000000000000013 /* Icon-20@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-20@3x.png"; sourceTree = "<group>"; };
+		1A0000050000000000000014 /* Icon-29.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-29.png"; sourceTree = "<group>"; };
+		1A0000050000000000000015 /* Icon-29@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-29@2x.png"; sourceTree = "<group>"; };
+		1A0000050000000000000016 /* Icon-29@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-29@3x.png"; sourceTree = "<group>"; };
+		1A0000050000000000000017 /* Icon-40.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-40.png"; sourceTree = "<group>"; };
+		1A0000050000000000000018 /* Icon-40@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-40@2x.png"; sourceTree = "<group>"; };
+		1A0000050000000000000019 /* Icon-40@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-40@3x.png"; sourceTree = "<group>"; };
+		1A000005000000000000001A /* Icon-60@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-60@2x.png"; sourceTree = "<group>"; };
+		1A000005000000000000001B /* Icon-60@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-60@3x.png"; sourceTree = "<group>"; };
+		1A000005000000000000001C /* Icon-76.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-76.png"; sourceTree = "<group>"; };
+		1A000005000000000000001D /* Icon-76@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-76@2x.png"; sourceTree = "<group>"; };
+		1A000005000000000000001E /* Icon-83.5@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-83.5@2x.png"; sourceTree = "<group>"; };
+		1A000005000000000000001F /* Icon-1024.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-1024.png"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1A0000010000000000000021 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1A0000020000000000000021 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1A0000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				1A0000010000000000000031 /* App-iOS */,
+				1A0000020000000000000031 /* App-macOS */,
+				1A0000030000000000000031 /* Shared */,
+				1A00000000000000000000F1 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1A00000000000000000000F1 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1A00000100000000000000F1 /* Nightwing iOS.app */,
+				1A00000200000000000000F1 /* Nightwing macOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		1A0000010000000000000031 /* App-iOS */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000050000000000000031 /* AppIcons */,
+				1A0000010000000000000011 /* NightwingIOSApp.swift */,
+				1A0000010000000000000012 /* iPhoneRootView.swift */,
+				1A0000010000000000000013 /* Info.plist */,
+			);
+			path = "App-iOS";
+			sourceTree = "<group>";
+		};
+		1A0000020000000000000031 /* App-macOS */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000020000000000000011 /* NightwingMacApp.swift */,
+				1A0000020000000000000012 /* MacRootView.swift */,
+			);
+			path = "App-macOS";
+			sourceTree = "<group>";
+		};
+		1A0000030000000000000031 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000040000000000000011 /* Assets.xcassets */,
+				1A0000030000000000000032 /* Models */,
+				1A0000030000000000000033 /* Playback */,
+				1A0000030000000000000034 /* Library */,
+				1A0000030000000000000035 /* Persistence */,
+				1A0000030000000000000036 /* UI */,
+				1A0000030000000000000037 /* Utilities */,
+				1A0000060000000000000031 /* Resources */,
+				1A0000060000000000000012 /* YtDlpDownloadService.swift */,
+				1A0000060000000000000013 /* YTDownloadStore.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		1A0000030000000000000032 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000030000000000000011 /* LibraryAvailability.swift */,
+				1A0000030000000000000012 /* Track.swift */,
+				1A0000030000000000000013 /* Album.swift */,
+				1A0000030000000000000014 /* Artist.swift */,
+				1A0000030000000000000015 /* Playlist.swift */,
+				1A0000030000000000000016 /* FolderSource.swift */,
+				1A0000030000000000000017 /* AudioFileType.swift */,
+				1A0000030000000000000018 /* LocalLibrary.swift */,
+				1A0000060000000000000011 /* OnlineSearchResult.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		1A0000030000000000000033 /* Playback */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000030000000000000019 /* PlaybackQueue.swift */,
+				1A000003000000000000001A /* PlaybackProfile.swift */,
+				1A000003000000000000001B /* PlaybackState.swift */,
+				1A000003000000000000001C /* PlayerEngine.swift */,
+			);
+			path = Playback;
+			sourceTree = "<group>";
+		};
+		1A0000030000000000000034 /* Library */ = {
+			isa = PBXGroup;
+			children = (
+				1A000003000000000000001D /* LibraryImportService.swift */,
+			);
+			path = Library;
+			sourceTree = "<group>";
+		};
+		1A0000030000000000000035 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				1A000003000000000000001E /* JSONLocalLibraryStore.swift */,
+			);
+			path = Persistence;
+			sourceTree = "<group>";
+		};
+		1A0000030000000000000036 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				1A000003000000000000001F /* NightwingReusableViews.swift */,
+				1A0000030000000000000020 /* NightwingSampleData.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		1A0000030000000000000037 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000030000000000000021 /* URL+NightwingLibrary.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		1A0000060000000000000031 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000060000000000000014 /* yt-dlp */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		1A0000050000000000000031 /* AppIcons */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000050000000000000011 /* Icon-20.png */,
+				1A0000050000000000000012 /* Icon-20@2x.png */,
+				1A0000050000000000000013 /* Icon-20@3x.png */,
+				1A0000050000000000000014 /* Icon-29.png */,
+				1A0000050000000000000015 /* Icon-29@2x.png */,
+				1A0000050000000000000016 /* Icon-29@3x.png */,
+				1A0000050000000000000017 /* Icon-40.png */,
+				1A0000050000000000000018 /* Icon-40@2x.png */,
+				1A0000050000000000000019 /* Icon-40@3x.png */,
+				1A000005000000000000001A /* Icon-60@2x.png */,
+				1A000005000000000000001B /* Icon-60@3x.png */,
+				1A000005000000000000001C /* Icon-76.png */,
+				1A000005000000000000001D /* Icon-76@2x.png */,
+				1A000005000000000000001E /* Icon-83.5@2x.png */,
+				1A000005000000000000001F /* Icon-1024.png */,
+			);
+			path = AppIcons;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1A0000010000000000000041 /* Nightwing iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A0000010000000000000051 /* Build configuration list for PBXNativeTarget "Nightwing iOS" */;
+			buildPhases = (
+				1A0000010000000000000061 /* Sources */,
+				1A0000010000000000000021 /* Frameworks */,
+				1A0000010000000000000071 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Nightwing iOS";
+			productName = "Nightwing iOS";
+			productReference = 1A00000100000000000000F1 /* Nightwing iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		1A0000020000000000000041 /* Nightwing macOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A0000020000000000000051 /* Build configuration list for PBXNativeTarget "Nightwing macOS" */;
+			buildPhases = (
+				1A0000020000000000000061 /* Sources */,
+				1A0000020000000000000021 /* Frameworks */,
+				1A0000020000000000000071 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Nightwing macOS";
+			productName = "Nightwing macOS";
+			productReference = 1A00000200000000000000F1 /* Nightwing macOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1A0000000000000000000041 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2650;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					1A0000010000000000000041 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+					1A0000020000000000000041 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+				};
+			};
+			buildConfigurationList = 1A0000000000000000000051 /* Build configuration list for PBXProject "Nightwing" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1A0000000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			productRefGroup = 1A00000000000000000000F1 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1A0000010000000000000041 /* Nightwing iOS */,
+				1A0000020000000000000041 /* Nightwing macOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1A0000010000000000000071 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A0000050000000000000001 /* Icon-20.png in Resources */,
+				1A0000050000000000000002 /* Icon-20@2x.png in Resources */,
+				1A0000050000000000000003 /* Icon-20@3x.png in Resources */,
+				1A0000050000000000000004 /* Icon-29.png in Resources */,
+				1A0000050000000000000005 /* Icon-29@2x.png in Resources */,
+				1A0000050000000000000006 /* Icon-29@3x.png in Resources */,
+				1A0000050000000000000007 /* Icon-40.png in Resources */,
+				1A0000050000000000000008 /* Icon-40@2x.png in Resources */,
+				1A0000050000000000000009 /* Icon-40@3x.png in Resources */,
+				1A000005000000000000000A /* Icon-60@2x.png in Resources */,
+				1A000005000000000000000B /* Icon-60@3x.png in Resources */,
+				1A000005000000000000000C /* Icon-76.png in Resources */,
+				1A000005000000000000000D /* Icon-76@2x.png in Resources */,
+				1A000005000000000000000E /* Icon-83.5@2x.png in Resources */,
+				1A000005000000000000000F /* Icon-1024.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1A0000020000000000000071 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A0000040000000000000002 /* Assets.xcassets in Resources */,
+				1A0000060000000000002004 /* yt-dlp in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1A0000010000000000000061 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A0000010000000000000001 /* NightwingIOSApp.swift in Sources */,
+				1A0000010000000000000002 /* iPhoneRootView.swift in Sources */,
+				1A0000030000000000001011 /* LibraryAvailability.swift in Sources */,
+				1A0000030000000000001012 /* Track.swift in Sources */,
+				1A0000030000000000001013 /* Album.swift in Sources */,
+				1A0000030000000000001014 /* Artist.swift in Sources */,
+				1A0000030000000000001015 /* Playlist.swift in Sources */,
+				1A0000030000000000001016 /* FolderSource.swift in Sources */,
+				1A0000030000000000001017 /* AudioFileType.swift in Sources */,
+				1A0000030000000000001018 /* LocalLibrary.swift in Sources */,
+				1A0000030000000000001019 /* PlaybackQueue.swift in Sources */,
+				1A000003000000000000101A /* PlaybackProfile.swift in Sources */,
+				1A000003000000000000101B /* PlaybackState.swift in Sources */,
+				1A000003000000000000101C /* PlayerEngine.swift in Sources */,
+				1A000003000000000000101D /* LibraryImportService.swift in Sources */,
+				1A000003000000000000101E /* JSONLocalLibraryStore.swift in Sources */,
+				1A000003000000000000101F /* NightwingReusableViews.swift in Sources */,
+				1A0000030000000000001020 /* NightwingSampleData.swift in Sources */,
+				1A0000030000000000001021 /* URL+NightwingLibrary.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1A0000020000000000000061 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A0000020000000000000001 /* NightwingMacApp.swift in Sources */,
+				1A0000020000000000000002 /* MacRootView.swift in Sources */,
+				1A0000030000000000002011 /* LibraryAvailability.swift in Sources */,
+				1A0000030000000000002012 /* Track.swift in Sources */,
+				1A0000030000000000002013 /* Album.swift in Sources */,
+				1A0000030000000000002014 /* Artist.swift in Sources */,
+				1A0000030000000000002015 /* Playlist.swift in Sources */,
+				1A0000030000000000002016 /* FolderSource.swift in Sources */,
+				1A0000030000000000002017 /* AudioFileType.swift in Sources */,
+				1A0000030000000000002018 /* LocalLibrary.swift in Sources */,
+				1A0000030000000000002019 /* PlaybackQueue.swift in Sources */,
+				1A000003000000000000201A /* PlaybackProfile.swift in Sources */,
+				1A000003000000000000201B /* PlaybackState.swift in Sources */,
+				1A000003000000000000201C /* PlayerEngine.swift in Sources */,
+				1A000003000000000000201D /* LibraryImportService.swift in Sources */,
+				1A000003000000000000201E /* JSONLocalLibraryStore.swift in Sources */,
+				1A000003000000000000201F /* NightwingReusableViews.swift in Sources */,
+				1A0000030000000000002020 /* NightwingSampleData.swift in Sources */,
+				1A0000030000000000002021 /* URL+NightwingLibrary.swift in Sources */,
+				1A0000060000000000002001 /* OnlineSearchResult.swift in Sources */,
+				1A0000060000000000002002 /* YtDlpDownloadService.swift in Sources */,
+				1A0000060000000000002003 /* YTDownloadStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1A0000000000000000000081 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = auto;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		1A0000000000000000000082 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = auto;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		1A0000010000000000000081 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6G8K3FNTVJ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "App-iOS/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Nightwing;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rayzhu.nightwing.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1A0000010000000000000082 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6G8K3FNTVJ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "App-iOS/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Nightwing;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rayzhu.nightwing.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		1A0000020000000000000081 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Nightwing;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rayzhu.nightwing.macos;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		1A0000020000000000000082 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Nightwing;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rayzhu.nightwing.macos;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1A0000000000000000000051 /* Build configuration list for PBXProject "Nightwing" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000000081 /* Debug */,
+				1A0000000000000000000082 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A0000010000000000000051 /* Build configuration list for PBXNativeTarget "Nightwing iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000010000000000000081 /* Debug */,
+				1A0000010000000000000082 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A0000020000000000000051 /* Build configuration list for PBXNativeTarget "Nightwing macOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000020000000000000081 /* Debug */,
+				1A0000020000000000000082 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1A0000000000000000000041 /* Project object */;
+}
