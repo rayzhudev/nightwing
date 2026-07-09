@@ -993,6 +993,9 @@ private struct SearchLocalTrackRow: View {
             Button("Play", systemImage: "play.fill") { appModel.play(track) }
             Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { appModel.playNext(track) }
             Button("Add to Queue", systemImage: "text.badge.plus") { appModel.enqueue(track) }
+            Button(track.lyricsMetadata?.status == .ready ? "Regenerate Lyrics" : "Generate Lyrics", systemImage: "quote.bubble") {
+                appModel.generateLyrics(for: track)
+            }
             if !appModel.library.playlists.isEmpty {
                 Menu("Add to Playlist", systemImage: "music.note.list") {
                     ForEach(appModel.library.playlists) { playlist in
@@ -2320,6 +2323,9 @@ private struct SpotifyTrackRow: View {
             }
             Button("Add to Queue", systemImage: "text.badge.plus") {
                 appModel.enqueue(track)
+            }
+            Button(track.lyricsMetadata?.status == .ready ? "Regenerate Lyrics" : "Generate Lyrics", systemImage: "quote.bubble") {
+                appModel.generateLyrics(for: track)
             }
             if !appModel.library.playlists.isEmpty {
                 Menu("Add to Playlist", systemImage: "music.note.list") {

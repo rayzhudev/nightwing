@@ -733,6 +733,9 @@ private struct iPhoneNowPlayingSheet: View {
                         togglePlayback: appModel.togglePlayback
                     )
 
+                    LyricsPanel(track: currentDisplayTrack)
+                        .frame(minHeight: 260, maxHeight: 360)
+
                     VStack(spacing: 18) {
                         VolumeControlView()
                         NightcoreControlPanel(initiallyExpanded: false)

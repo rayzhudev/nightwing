@@ -35,6 +35,8 @@ final class NightwingAppModel: ObservableObject {
     @Published var statusMessage: String?
     @Published var isImporting = false
     @Published private(set) var optimisticPlaybackTrackID: Track.ID?
+    @Published private(set) var lyricsDocumentsByTrackID: [Track.ID: LyricsDocument] = [:]
+    @Published private(set) var generatingLyricsTrackIDs: Set<Track.ID> = []
     #if os(macOS)
     @Published private(set) var onlineSearchResults: [OnlineSearchResult] = []
     @Published private(set) var onlineAlbumResults: [OnlineAlbumSearchResult] = []
@@ -44,6 +46,10 @@ final class NightwingAppModel: ObservableObject {
     let player = PlayerEngine(profile: .nightcore)
 
     private let importService = LibraryImportService()
+    private let lyricsStore: LyricsSidecarStore?
+    private let lyricsTranscriptionService = LyricsTranscriptionService()
+    private var lyricsLoadTasks: [Track.ID: Task<Void, Never>] = [:]
+    private var lyricsGenerationTasks: [Track.ID: Task<Void, Never>] = [:]
     #if os(macOS)
     private let onlineSearchService = YtDlpDownloadService()
     private var onlineSearchTask: Task<Void, Never>?
@@ -76,6 +82,7 @@ final class NightwingAppModel: ObservableObject {
 
     init() {
         store = try? JSONLocalLibraryStore.defaultStore()
+        lyricsStore = try? LyricsSidecarStore.defaultStore()
         observePlaybackState()
         Task {
             await loadLibrary()
@@ -92,6 +99,8 @@ final class NightwingAppModel: ObservableObject {
         playbackAnalysisTask?.cancel()
         playbackStateCancellable?.cancel()
         playbackResumeSaveTask?.cancel()
+        lyricsLoadTasks.values.forEach { $0.cancel() }
+        lyricsGenerationTasks.values.forEach { $0.cancel() }
         #if os(macOS)
         onlineSearchTask?.cancel()
         #endif
@@ -896,6 +905,96 @@ final class NightwingAppModel: ObservableObject {
         return track(for: player.state.currentItem)
     }
 
+    func lyricsDocument(for track: Track?) -> LyricsDocument? {
+        guard let track else { return nil }
+        return lyricsDocumentsByTrackID[track.id]
+    }
+
+    func isGeneratingLyrics(for track: Track?) -> Bool {
+        guard let track else { return false }
+        return generatingLyricsTrackIDs.contains(track.id)
+    }
+
+    func loadLyricsIfAvailable(for track: Track?) {
+        guard let track,
+              lyricsDocumentsByTrackID[track.id] == nil,
+              lyricsLoadTasks[track.id] == nil,
+              let cacheKey = track.lyricsMetadata?.cacheKey,
+              track.lyricsMetadata?.status == .ready,
+              let lyricsStore else {
+            return
+        }
+
+        lyricsLoadTasks[track.id] = Task { @MainActor [weak self] in
+            defer {
+                self?.lyricsLoadTasks[track.id] = nil
+            }
+
+            do {
+                if let document = try await lyricsStore.load(cacheKey: cacheKey) {
+                    self?.lyricsDocumentsByTrackID[track.id] = document
+                }
+            } catch {
+                self?.statusMessage = "Could not load lyrics: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func generateLyrics(for track: Track) {
+        guard lyricsGenerationTasks[track.id] == nil else {
+            statusMessage = "Lyrics are already being generated for \(track.title)."
+            return
+        }
+
+        guard let lyricsStore else {
+            statusMessage = "Could not create a lyrics store."
+            return
+        }
+
+        generatingLyricsTrackIDs.insert(track.id)
+        statusMessage = "Generating lyrics for \(track.title)..."
+
+        let sourceURL = playbackURL(for: track)
+        let cacheKey = lyricsCacheKey(for: track, sourceURL: sourceURL)
+        lyricsGenerationTasks[track.id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.generatingLyricsTrackIDs.remove(track.id)
+                self.lyricsGenerationTasks[track.id] = nil
+            }
+
+            do {
+                let document = try await self.lyricsTranscriptionService.transcribe(track: track, sourceURL: sourceURL)
+                try await lyricsStore.save(document, cacheKey: cacheKey)
+                self.lyricsDocumentsByTrackID[track.id] = document
+                self.updateLyricsMetadata(
+                    trackID: track.id,
+                    metadata: LyricsMetadata(
+                        cacheKey: cacheKey,
+                        status: .ready,
+                        generatedAt: document.generatedAt,
+                        modelName: document.modelName
+                    )
+                )
+                await self.persistLibrary()
+                self.statusMessage = "Generated lyrics for \(track.title)."
+            } catch {
+                self.updateLyricsMetadata(
+                    trackID: track.id,
+                    metadata: LyricsMetadata(
+                        cacheKey: cacheKey,
+                        status: .failed,
+                        generatedAt: nil,
+                        modelName: "Systran/faster-whisper-small",
+                        errorDescription: error.localizedDescription
+                    )
+                )
+                await self.persistLibrary()
+                self.statusMessage = "Could not generate lyrics: \(error.localizedDescription)"
+            }
+        }
+    }
+
     func isCurrentTrack(_ track: Track) -> Bool {
         if optimisticPlaybackTrackID == track.id {
             return true
@@ -1334,6 +1433,25 @@ final class NightwingAppModel: ObservableObject {
         Task {
             await persistLibrary()
         }
+    }
+
+    private func updateLyricsMetadata(trackID: Track.ID, metadata: LyricsMetadata) {
+        guard let index = library.tracks.firstIndex(where: { $0.id == trackID }) else { return }
+        library.tracks[index].lyricsMetadata = metadata
+    }
+
+    private func lyricsCacheKey(for track: Track, sourceURL: URL) -> String {
+        let stablePath = sourceURL.standardizedFileURL.path
+        return "\(track.id.uuidString)-\(Self.fnv1a64Hex(stablePath))"
+    }
+
+    private static func fnv1a64Hex(_ value: String) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        return String(hash, radix: 16)
     }
 
     private func playbackURL(for track: Track) -> URL {
@@ -2113,6 +2231,11 @@ struct LibraryTrackRowView: View {
             Button("Add to Queue", systemImage: "text.badge.plus") {
                 appModel.enqueue(track)
             }
+            #if os(macOS)
+            Button(track.lyricsMetadata?.status == .ready ? "Regenerate Lyrics" : "Generate Lyrics", systemImage: "quote.bubble") {
+                appModel.generateLyrics(for: track)
+            }
+            #endif
             Button("Add to Playlist", systemImage: "music.note.list") {}
             Divider()
             Button("Locate File", systemImage: "folder") {}
@@ -2226,6 +2349,7 @@ struct MiniPlayerBar: View {
     @EnvironmentObject private var player: PlayerEngine
 
     var showsQueue: Binding<Bool>?
+    @State private var showsLyrics = false
 
     init(showsQueue: Binding<Bool>? = nil) {
         self.showsQueue = showsQueue
@@ -2373,6 +2497,18 @@ struct MiniPlayerBar: View {
             Spacer(minLength: 10)
 
             HStack(spacing: 12) {
+                Button {
+                    showsLyrics = true
+                } label: {
+                    Image(systemName: "quote.bubble")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(currentDisplayTrack == nil ? NightwingTheme.secondaryText.opacity(0.5) : NightwingTheme.secondaryText)
+                .disabled(currentDisplayTrack == nil)
+                .help("Lyrics")
+                .accessibilityLabel("Lyrics")
+
                 if let showsQueue {
                     QueueToggleButton(showsQueue: showsQueue)
                 }
@@ -2389,6 +2525,13 @@ struct MiniPlayerBar: View {
             Rectangle()
                 .fill(NightwingTheme.divider)
                 .frame(height: 1)
+        }
+        .sheet(isPresented: $showsLyrics) {
+            LyricsPanel(track: currentDisplayTrack)
+                .environmentObject(appModel)
+                .environmentObject(player)
+                .frame(minWidth: 420, idealWidth: 520, minHeight: 520, idealHeight: 680)
+                .background(NightwingTheme.background)
         }
     }
 #endif
@@ -2458,6 +2601,140 @@ struct MiniPlayerBar: View {
     private var mobileProgressFraction: CGFloat {
         guard player.state.duration > 0 else { return 0 }
         return CGFloat(min(max(player.state.currentTime / player.state.duration, 0), 1))
+    }
+}
+
+struct LyricsPanel: View {
+    @EnvironmentObject private var appModel: NightwingAppModel
+    @EnvironmentObject private var player: PlayerEngine
+
+    let track: Track?
+
+    private var document: LyricsDocument? {
+        appModel.lyricsDocument(for: track)
+    }
+
+    private var isGenerating: Bool {
+        appModel.isGeneratingLyrics(for: track)
+    }
+
+    private var activeLineID: LyricsLine.ID? {
+        document?.activeLineIndex(at: player.state.currentTime).flatMap { index in
+            document?.lines[index].id
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
+
+            if let document, !document.lines.isEmpty {
+                lyricLines(document)
+            } else {
+                emptyState
+            }
+        }
+        .padding(20)
+        .task(id: track?.id) {
+            appModel.loadLyricsIfAvailable(for: track)
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Lyrics")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(NightwingTheme.primaryText)
+
+                Text(track?.title ?? "Nothing Playing")
+                    .font(.caption)
+                    .foregroundStyle(NightwingTheme.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            #if os(macOS)
+            if let track {
+                Button {
+                    appModel.generateLyrics(for: track)
+                } label: {
+                    if isGenerating {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 18, height: 18)
+                    } else {
+                        Image(systemName: document == nil ? "waveform.badge.magnifyingglass" : "arrow.clockwise")
+                            .frame(width: 18, height: 18)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(isGenerating)
+                .help(document == nil ? "Generate lyrics" : "Regenerate lyrics")
+                .accessibilityLabel(document == nil ? "Generate lyrics" : "Regenerate lyrics")
+            }
+            #endif
+        }
+    }
+
+    private func lyricLines(_ document: LyricsDocument) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(document.lines) { line in
+                        Text(line.text)
+                            .font(line.id == activeLineID ? .title3.weight(.bold) : .title3.weight(.semibold))
+                            .foregroundStyle(line.id == activeLineID ? NightwingTheme.primaryText : NightwingTheme.secondaryText)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .id(line.id)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.vertical, 10)
+            }
+            .onChange(of: activeLineID) { _, newValue in
+                guard let newValue else { return }
+                withAnimation(.snappy(duration: 0.24)) {
+                    proxy.scrollTo(newValue, anchor: .center)
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if isGenerating {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Generating lyrics...")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(NightwingTheme.secondaryText)
+                }
+            } else if let track {
+                Text(track.lyricsMetadata?.status == .failed ? "Lyrics failed." : "No lyrics yet.")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(NightwingTheme.secondaryText)
+
+                #if os(macOS)
+                Button {
+                    appModel.generateLyrics(for: track)
+                } label: {
+                    Label("Generate Lyrics", systemImage: "waveform.badge.magnifyingglass")
+                }
+                .buttonStyle(.borderedProminent)
+                #endif
+            } else {
+                Text("Nothing playing.")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(NightwingTheme.secondaryText)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 

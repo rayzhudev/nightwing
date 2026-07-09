@@ -70,6 +70,9 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
             if updatedTrack.playbackAnalysisVersion == nil {
                 updatedTrack.playbackAnalysisVersion = tracks[index].playbackAnalysisVersion
             }
+            if updatedTrack.lyricsMetadata == nil {
+                updatedTrack.lyricsMetadata = tracks[index].lyricsMetadata
+            }
             tracks[index] = updatedTrack
         } else {
             tracks.append(track)

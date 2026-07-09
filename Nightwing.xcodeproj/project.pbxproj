@@ -28,6 +28,9 @@
 		1A000003000000000000101F /* NightwingReusableViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001F /* NightwingReusableViews.swift */; };
 		1A0000030000000000001020 /* NightwingSampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000020 /* NightwingSampleData.swift */; };
 		1A0000030000000000001021 /* URL+NightwingLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000021 /* URL+NightwingLibrary.swift */; };
+		1A0000030000000000001022 /* Lyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000022 /* Lyrics.swift */; };
+		1A0000030000000000001023 /* LyricsSidecarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000023 /* LyricsSidecarStore.swift */; };
+		1A0000030000000000001024 /* LyricsTranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000024 /* LyricsTranscriptionService.swift */; };
 		1A0000030000000000002011 /* LibraryAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000011 /* LibraryAvailability.swift */; };
 		1A0000030000000000002012 /* Track.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000012 /* Track.swift */; };
 		1A0000030000000000002013 /* Album.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000013 /* Album.swift */; };
@@ -45,6 +48,9 @@
 		1A000003000000000000201F /* NightwingReusableViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000003000000000000001F /* NightwingReusableViews.swift */; };
 		1A0000030000000000002020 /* NightwingSampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000020 /* NightwingSampleData.swift */; };
 		1A0000030000000000002021 /* URL+NightwingLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000021 /* URL+NightwingLibrary.swift */; };
+		1A0000030000000000002022 /* Lyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000022 /* Lyrics.swift */; };
+		1A0000030000000000002023 /* LyricsSidecarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000023 /* LyricsSidecarStore.swift */; };
+		1A0000030000000000002024 /* LyricsTranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000030000000000000024 /* LyricsTranscriptionService.swift */; };
 		1A0000040000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000040000000000000011 /* Assets.xcassets */; };
 		1A0000060000000000002001 /* OnlineSearchResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000060000000000000011 /* OnlineSearchResult.swift */; };
 		1A0000060000000000002002 /* YtDlpDownloadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000060000000000000012 /* YtDlpDownloadService.swift */; };
@@ -92,6 +98,9 @@
 		1A000003000000000000001F /* NightwingReusableViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightwingReusableViews.swift; sourceTree = "<group>"; };
 		1A0000030000000000000020 /* NightwingSampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightwingSampleData.swift; sourceTree = "<group>"; };
 		1A0000030000000000000021 /* URL+NightwingLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "URL+NightwingLibrary.swift"; sourceTree = "<group>"; };
+		1A0000030000000000000022 /* Lyrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lyrics.swift; sourceTree = "<group>"; };
+		1A0000030000000000000023 /* LyricsSidecarStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsSidecarStore.swift; sourceTree = "<group>"; };
+		1A0000030000000000000024 /* LyricsTranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsTranscriptionService.swift; sourceTree = "<group>"; };
 		1A0000040000000000000011 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1A0000060000000000000011 /* OnlineSearchResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineSearchResult.swift; sourceTree = "<group>"; };
 		1A0000060000000000000012 /* YtDlpDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YtDlpDownloadService.swift; sourceTree = "<group>"; };
@@ -199,6 +208,7 @@
 				1A0000030000000000000016 /* FolderSource.swift */,
 				1A0000030000000000000017 /* AudioFileType.swift */,
 				1A0000030000000000000018 /* LocalLibrary.swift */,
+				1A0000030000000000000022 /* Lyrics.swift */,
 				1A0000060000000000000011 /* OnlineSearchResult.swift */,
 			);
 			path = Models;
@@ -219,6 +229,7 @@
 			isa = PBXGroup;
 			children = (
 				1A000003000000000000001D /* LibraryImportService.swift */,
+				1A0000030000000000000024 /* LyricsTranscriptionService.swift */,
 			);
 			path = Library;
 			sourceTree = "<group>";
@@ -227,6 +238,7 @@
 			isa = PBXGroup;
 			children = (
 				1A000003000000000000001E /* JSONLocalLibraryStore.swift */,
+				1A0000030000000000000023 /* LyricsSidecarStore.swift */,
 			);
 			path = Persistence;
 			sourceTree = "<group>";
@@ -402,12 +414,15 @@
 				1A0000030000000000001016 /* FolderSource.swift in Sources */,
 				1A0000030000000000001017 /* AudioFileType.swift in Sources */,
 				1A0000030000000000001018 /* LocalLibrary.swift in Sources */,
+				1A0000030000000000001022 /* Lyrics.swift in Sources */,
 				1A0000030000000000001019 /* PlaybackQueue.swift in Sources */,
 				1A000003000000000000101A /* PlaybackProfile.swift in Sources */,
 				1A000003000000000000101B /* PlaybackState.swift in Sources */,
 				1A000003000000000000101C /* PlayerEngine.swift in Sources */,
 				1A000003000000000000101D /* LibraryImportService.swift in Sources */,
+				1A0000030000000000001024 /* LyricsTranscriptionService.swift in Sources */,
 				1A000003000000000000101E /* JSONLocalLibraryStore.swift in Sources */,
+				1A0000030000000000001023 /* LyricsSidecarStore.swift in Sources */,
 				1A000003000000000000101F /* NightwingReusableViews.swift in Sources */,
 				1A0000030000000000001020 /* NightwingSampleData.swift in Sources */,
 				1A0000030000000000001021 /* URL+NightwingLibrary.swift in Sources */,
@@ -428,12 +443,15 @@
 				1A0000030000000000002016 /* FolderSource.swift in Sources */,
 				1A0000030000000000002017 /* AudioFileType.swift in Sources */,
 				1A0000030000000000002018 /* LocalLibrary.swift in Sources */,
+				1A0000030000000000002022 /* Lyrics.swift in Sources */,
 				1A0000030000000000002019 /* PlaybackQueue.swift in Sources */,
 				1A000003000000000000201A /* PlaybackProfile.swift in Sources */,
 				1A000003000000000000201B /* PlaybackState.swift in Sources */,
 				1A000003000000000000201C /* PlayerEngine.swift in Sources */,
 				1A000003000000000000201D /* LibraryImportService.swift in Sources */,
+				1A0000030000000000002024 /* LyricsTranscriptionService.swift in Sources */,
 				1A000003000000000000201E /* JSONLocalLibraryStore.swift in Sources */,
+				1A0000030000000000002023 /* LyricsSidecarStore.swift in Sources */,
 				1A000003000000000000201F /* NightwingReusableViews.swift in Sources */,
 				1A0000030000000000002020 /* NightwingSampleData.swift in Sources */,
 				1A0000030000000000002021 /* URL+NightwingLibrary.swift in Sources */,

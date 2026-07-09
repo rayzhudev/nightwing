@@ -20,6 +20,7 @@ public struct Track: Identifiable, Codable, Equatable, Hashable, Sendable {
     public var playbackNormalizationGain: Double?
     public var playbackEndTime: TimeInterval?
     public var playbackAnalysisVersion: Int?
+    public var lyricsMetadata: LyricsMetadata?
     public var dateAdded: Date
     public var lastPlayedDate: Date?
     public var playCount: Int
@@ -45,6 +46,7 @@ public struct Track: Identifiable, Codable, Equatable, Hashable, Sendable {
         playbackNormalizationGain: Double? = nil,
         playbackEndTime: TimeInterval? = nil,
         playbackAnalysisVersion: Int? = nil,
+        lyricsMetadata: LyricsMetadata? = nil,
         dateAdded: Date = Date(),
         lastPlayedDate: Date? = nil,
         playCount: Int = 0,
@@ -69,6 +71,7 @@ public struct Track: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.playbackNormalizationGain = playbackNormalizationGain
         self.playbackEndTime = playbackEndTime
         self.playbackAnalysisVersion = playbackAnalysisVersion
+        self.lyricsMetadata = lyricsMetadata
         self.dateAdded = dateAdded
         self.lastPlayedDate = lastPlayedDate
         self.playCount = playCount

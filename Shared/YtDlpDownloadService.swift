@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import Darwin
+#endif
 #if canImport(os)
 import os
 #endif
@@ -72,7 +75,8 @@ actor YtDlpDownloadService {
         _ track: OnlineSearchResult,
         progressHandler: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
-        guard let ytDlpPath = Self.locateYtDlp() else {
+        let ytDlpPaths = Self.locateYtDlpCandidates()
+        guard !ytDlpPaths.isEmpty else {
             throw YtDlpError.notFound
         }
 
@@ -111,29 +115,21 @@ actor YtDlpDownloadService {
         #endif
 
         let downloadTask = Task {
-            do {
-                return try await Self.downloadWithProgress(
-                    executable: ytDlpPath,
-                    arguments: Self.directAudioDownloadArguments(
-                        format: Self.preferredAudioFormat(for: track),
-                        outputTemplate: outputTemplate,
-                        sourceURL: track.sourceURL
-                    ),
-                    expectedFileURL: downloadsDir.appendingPathComponent("\(sourceHash).\(extensionName)"),
-                    progressHandler: progressHandler
-                )
-            } catch {
-                return try await Self.downloadWithProgress(
-                    executable: ytDlpPath,
-                    arguments: Self.extractedAudioDownloadArguments(
-                        extensionName: extensionName,
-                        outputTemplate: outputTemplate,
-                        sourceURL: track.sourceURL
-                    ),
-                    expectedFileURL: downloadsDir.appendingPathComponent("\(sourceHash).\(extensionName)"),
-                    progressHandler: progressHandler
-                )
-            }
+            try await Self.downloadTrackWithFallbacks(
+                executables: ytDlpPaths,
+                directArguments: Self.directAudioDownloadArguments(
+                    format: Self.preferredAudioFormat(for: track),
+                    outputTemplate: outputTemplate,
+                    sourceURL: track.sourceURL
+                ),
+                extractedArguments: Self.extractedAudioDownloadArguments(
+                    extensionName: extensionName,
+                    outputTemplate: outputTemplate,
+                    sourceURL: track.sourceURL
+                ),
+                expectedFileURL: downloadsDir.appendingPathComponent("\(sourceHash).\(extensionName)"),
+                progressHandler: progressHandler
+            )
         }
         inFlightTrackDownloads[sourceHash] = downloadTask
         let localFileURL = try await downloadTask.value
@@ -159,7 +155,8 @@ actor YtDlpDownloadService {
         _ album: OnlineAlbumSearchResult,
         progressHandler: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
-        guard let ytDlpPath = Self.locateYtDlp() else {
+        let ytDlpPaths = Self.locateYtDlpCandidates()
+        guard !ytDlpPaths.isEmpty else {
             throw YtDlpError.notFound
         }
 
@@ -187,7 +184,7 @@ actor YtDlpDownloadService {
 
         let downloadTask = Task {
             try await Self.downloadAlbumWithRetries(
-                executable: ytDlpPath,
+                executables: ytDlpPaths,
                 album: album,
                 sourceHash: sourceHash,
                 finalDirectory: albumDir,
@@ -251,30 +248,114 @@ actor YtDlpDownloadService {
     }
 
     static func locateYtDlp() -> String? {
-        if let bundleURL = Bundle.main.url(forResource: "yt-dlp", withExtension: nil),
-           FileManager.default.isExecutableFile(atPath: bundleURL.path) {
-            return bundleURL.path
-        }
+        locateYtDlpCandidates().first
+    }
 
-        if let bundleURL = Bundle.main.resourceURL?.appendingPathComponent("yt-dlp"),
-           FileManager.default.isExecutableFile(atPath: bundleURL.path) {
-            return bundleURL.path
+    static func locateYtDlpCandidates() -> [String] {
+        var candidates: [String] = []
+        var seen = Set<String>()
+
+        if let bundleURL = bundledYtDlpURL() {
+            if let preparedURL = prepareBundledYtDlp(from: bundleURL) {
+                appendExecutableCandidate(preparedURL.path, to: &candidates, seen: &seen)
+            }
+            appendExecutableCandidate(bundleURL.path, to: &candidates, seen: &seen)
         }
 
         if let path = ProcessInfo.processInfo.environment["PATH"] {
             for dir in path.components(separatedBy: ":") {
                 let candidate = (dir as NSString).appendingPathComponent("yt-dlp")
-                if FileManager.default.isExecutableFile(atPath: candidate) {
-                    return candidate
-                }
+                appendExecutableCandidate(candidate, to: &candidates, seen: &seen)
             }
         }
 
-        for path in ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp"] where FileManager.default.isExecutableFile(atPath: path) {
-            return path
+        for path in ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp"] {
+            appendExecutableCandidate(path, to: &candidates, seen: &seen)
+        }
+
+        return candidates
+    }
+
+    private static func bundledYtDlpURL() -> URL? {
+        if let bundleURL = Bundle.main.url(forResource: "yt-dlp", withExtension: nil),
+           FileManager.default.fileExists(atPath: bundleURL.path) {
+            return bundleURL
+        }
+
+        if let bundleURL = Bundle.main.resourceURL?.appendingPathComponent("yt-dlp"),
+           FileManager.default.fileExists(atPath: bundleURL.path) {
+            return bundleURL
         }
 
         return nil
+    }
+
+    private static func prepareBundledYtDlp(from bundleURL: URL) -> URL? {
+        guard let destinationURL = helperDestinationURL() else { return nil }
+        let fileManager = FileManager.default
+
+        do {
+            try fileManager.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+
+            let shouldCopy = !fileManager.fileExists(atPath: destinationURL.path) ||
+                fileSize(at: destinationURL) != fileSize(at: bundleURL)
+
+            if shouldCopy {
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.copyItem(at: bundleURL, to: destinationURL)
+            }
+
+            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destinationURL.path)
+            removeLaunchBlockingExtendedAttributes(from: destinationURL)
+
+            guard fileManager.isExecutableFile(atPath: destinationURL.path) else { return nil }
+            return destinationURL
+        } catch {
+            #if canImport(os)
+            Logger(subsystem: "com.nightwing", category: "YtDlp").error("Could not prepare yt-dlp helper: \(error.localizedDescription, privacy: .public)")
+            #endif
+            return nil
+        }
+    }
+
+    private static func helperDestinationURL() -> URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Nightwing")
+            .appendingPathComponent("Helpers")
+            .appendingPathComponent("yt-dlp")
+    }
+
+    private static func fileSize(at url: URL) -> UInt64? {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        return values?.fileSize.map(UInt64.init)
+    }
+
+    private static func appendExecutableCandidate(_ path: String, to candidates: inout [String], seen: inout Set<String>) {
+        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard !seen.contains(standardizedPath),
+              FileManager.default.isExecutableFile(atPath: standardizedPath) else {
+            return
+        }
+
+        seen.insert(standardizedPath)
+        candidates.append(standardizedPath)
+    }
+
+    private static func removeLaunchBlockingExtendedAttributes(from url: URL) {
+        #if os(macOS)
+        for attribute in ["com.apple.quarantine", "com.apple.provenance"] {
+            url.path.withCString { pathPointer in
+                attribute.withCString { attributePointer in
+                    _ = removexattr(pathPointer, attributePointer, 0)
+                }
+            }
+        }
+        #endif
     }
 
     static func downloadsBaseURL() -> URL {
@@ -376,6 +457,8 @@ actor YtDlpDownloadService {
             "--newline",
             "--no-playlist",
             "--no-mtime",
+            "--retries", "3",
+            "--fragment-retries", "3",
             "--concurrent-fragments", "4",
             "--format", format,
             "--output", outputTemplate,
@@ -388,6 +471,8 @@ actor YtDlpDownloadService {
             "--newline",
             "--no-playlist",
             "--no-mtime",
+            "--retries", "3",
+            "--fragment-retries", "3",
             "--concurrent-fragments", "4",
             "--format", "bestaudio/best",
             "--extract-audio",
@@ -416,8 +501,58 @@ actor YtDlpDownloadService {
         ]
     }
 
+    private static func downloadTrackWithFallbacks(
+        executables: [String],
+        directArguments: [String],
+        extractedArguments: [String],
+        expectedFileURL: URL,
+        progressHandler: (@Sendable (Double) -> Void)?
+    ) async throws -> URL {
+        var lastError: Error?
+
+        for (attempt, delay) in downloadRetryDelaysNanoseconds.enumerated() {
+            if delay > 0 {
+                try await Task.sleep(nanoseconds: delay)
+            }
+
+            for executable in executables {
+                do {
+                    return try await downloadWithProgress(
+                        executable: executable,
+                        arguments: directArguments,
+                        expectedFileURL: expectedFileURL,
+                        progressHandler: progressHandler
+                    )
+                } catch {
+                    lastError = error
+
+                    #if canImport(os)
+                    Logger(subsystem: "com.nightwing", category: "YtDlp").error("Direct download attempt \(attempt + 1, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                    #endif
+                }
+
+                do {
+                    return try await downloadWithProgress(
+                        executable: executable,
+                        arguments: extractedArguments,
+                        expectedFileURL: expectedFileURL,
+                        progressHandler: progressHandler
+                    )
+                } catch {
+                    lastError = error
+
+                    #if canImport(os)
+                    Logger(subsystem: "com.nightwing", category: "YtDlp").error("Extracted download attempt \(attempt + 1, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                    #endif
+                }
+            }
+        }
+
+        throw lastError ?? YtDlpError.downloadFailed("No audio file was downloaded.")
+    }
+
     private static func downloadAlbumWithRetries(
-        executable: String,
+        executables: [String],
         album: OnlineAlbumSearchResult,
         sourceHash: String,
         finalDirectory: URL,
@@ -431,22 +566,24 @@ actor YtDlpDownloadService {
             }
 
             let stagingDirectory = temporaryAlbumDirectory(sourceHash: sourceHash)
-            do {
-                let folderURL = try await downloadAlbumOnce(
-                    executable: executable,
-                    album: album,
-                    stagingDirectory: stagingDirectory,
-                    finalDirectory: finalDirectory,
-                    progressHandler: progressHandler
-                )
-                return folderURL
-            } catch {
-                lastError = error
-                try? FileManager.default.removeItem(at: stagingDirectory)
+            for executable in executables {
+                do {
+                    let folderURL = try await downloadAlbumOnce(
+                        executable: executable,
+                        album: album,
+                        stagingDirectory: stagingDirectory,
+                        finalDirectory: finalDirectory,
+                        progressHandler: progressHandler
+                    )
+                    return folderURL
+                } catch {
+                    lastError = error
+                    try? FileManager.default.removeItem(at: stagingDirectory)
 
-                #if canImport(os)
-                Logger(subsystem: "com.nightwing", category: "YtDlp").error("Album download attempt \(attempt + 1, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-                #endif
+                    #if canImport(os)
+                    Logger(subsystem: "com.nightwing", category: "YtDlp").error("Album download attempt \(attempt + 1, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                    #endif
+                }
             }
         }
 
@@ -504,7 +641,11 @@ actor YtDlpDownloadService {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            throw YtDlpError.launchFailed(error.localizedDescription)
+        }
 
         var output = ""
         while process.isRunning {
@@ -532,11 +673,7 @@ actor YtDlpDownloadService {
         process.waitUntilExit()
 
         guard process.terminationStatus == 0 else {
-            let message = output
-                .split(separator: "\n")
-                .last
-                .map(String.init) ?? "Unknown error"
-            throw YtDlpError.downloadFailed(message)
+            throw YtDlpError.downloadFailed(diagnosticMessage(from: output))
         }
 
         if FileManager.default.fileExists(atPath: expectedFileURL.path) {
@@ -568,7 +705,11 @@ actor YtDlpDownloadService {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            throw YtDlpError.launchFailed(error.localizedDescription)
+        }
 
         var output = ""
         while process.isRunning {
@@ -596,11 +737,7 @@ actor YtDlpDownloadService {
         process.waitUntilExit()
 
         guard process.terminationStatus == 0 else {
-            let message = output
-                .split(separator: "\n")
-                .last
-                .map(String.init) ?? "Unknown error"
-            throw YtDlpError.downloadFailed(message)
+            throw YtDlpError.downloadFailed(diagnosticMessage(from: output))
         }
     }
 
@@ -623,6 +760,15 @@ actor YtDlpDownloadService {
         }
 
         return output
+    }
+
+    private static func diagnosticMessage(from output: String) -> String {
+        let lines = output
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return lines.last ?? "Unknown error"
     }
 
     private static func fetchYouTubeCandidates(query: String, sourceBias: Int) async throws -> [YouTubeSearchCandidate] {
@@ -1619,15 +1765,18 @@ enum YtDlpError: LocalizedError {
     case notFound
     case downloadFailed(String)
     case commandFailed(String)
+    case launchFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .notFound:
-            return "yt-dlp is not bundled or installed."
+            return "Nightwing could not find its download helper."
         case let .downloadFailed(message):
             return "Download failed: \(message)"
         case let .commandFailed(command):
             return "Command failed: \(command)"
+        case let .launchFailed(reason):
+            return "Could not start the download helper: \(reason)"
         }
     }
 }
