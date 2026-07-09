@@ -15,6 +15,7 @@ ARCHIVE_PATH="$RELEASE_ROOT/Nightwing.xcarchive"
 ARCHIVED_APP_PATH="$ARCHIVE_PATH/Products/Applications/Nightwing macOS.app"
 RELEASE_APP_PATH="$RELEASE_ROOT/Nightwing.app"
 RELEASE_YTDLP_PATH="$RELEASE_APP_PATH/Contents/Resources/yt-dlp"
+RELEASE_YTDLP_ENTITLEMENTS_PATH="/private/tmp/nightwing-yt-dlp.entitlements"
 NOTARY_UPLOAD_ZIP_PATH="$RELEASE_ROOT/Nightwing-notary-upload.zip"
 FINAL_ZIP_PATH="$RELEASE_ROOT/Nightwing-macOS.zip"
 
@@ -89,10 +90,22 @@ build_release() {
   echo
   echo "Signing bundled executable resources..."
   if [[ -f "$RELEASE_YTDLP_PATH" ]]; then
+    cat > "$RELEASE_YTDLP_ENTITLEMENTS_PATH" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
     chmod +x "$RELEASE_YTDLP_PATH"
     codesign \
       --force \
       --options runtime \
+      --entitlements "$RELEASE_YTDLP_ENTITLEMENTS_PATH" \
       --timestamp \
       --sign "$DEVELOPER_ID_IDENTITY" \
       "$RELEASE_YTDLP_PATH"
