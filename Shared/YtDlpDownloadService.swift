@@ -6,6 +6,7 @@ import os
 actor YtDlpDownloadService {
     private static let chromeUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     private static let maxSearchCacheEntries = 24
+    private static let downloadRetryDelaysNanoseconds: [UInt64] = [0, 700_000_000, 1_800_000_000]
     private static let youTubeMusicClientContextCache = YouTubeMusicClientContextCache()
     private let store = OnlineTrackStore()
     #if canImport(os)
@@ -14,6 +15,7 @@ actor YtDlpDownloadService {
     private let maxConcurrentDownloads = 2
     private var activeDownloads = 0
     private var inFlightTrackDownloads: [String: Task<URL, Error>] = [:]
+    private var inFlightAlbumDownloads: [String: Task<URL, Error>] = [:]
     private var trackSearchCache: [String: [OnlineSearchResult]] = [:]
     private var albumSearchCache: [String: [OnlineAlbumSearchResult]] = [:]
     private var trackSearchCacheOrder: [String] = []
@@ -99,7 +101,7 @@ actor YtDlpDownloadService {
         let downloadsDir = Self.onlineTrackDirectory(sourceHash: sourceHash)
         try FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
 
-        let extensionName = audioExtension(for: track)
+        let extensionName = preferredAudioExtension(for: track)
         let outputTemplate = downloadsDir
             .appendingPathComponent("\(sourceHash).%(ext)s")
             .path
@@ -109,25 +111,32 @@ actor YtDlpDownloadService {
         #endif
 
         let downloadTask = Task {
-            try await Self.downloadWithProgress(
-                executable: ytDlpPath,
-                arguments: [
-                "--newline",
-                "--no-playlist",
-                "--format", "bestaudio/best",
-                "--extract-audio",
-                "--audio-format", extensionName,
-                "--audio-quality", "0",
-                "--output", outputTemplate,
-                track.sourceURL.absoluteString
-                ],
-                expectedFileURL: downloadsDir.appendingPathComponent("\(sourceHash).\(extensionName)"),
-                progressHandler: progressHandler
-            )
+            do {
+                return try await Self.downloadWithProgress(
+                    executable: ytDlpPath,
+                    arguments: Self.directAudioDownloadArguments(
+                        format: Self.preferredAudioFormat(for: track),
+                        outputTemplate: outputTemplate,
+                        sourceURL: track.sourceURL
+                    ),
+                    expectedFileURL: downloadsDir.appendingPathComponent("\(sourceHash).\(extensionName)"),
+                    progressHandler: progressHandler
+                )
+            } catch {
+                return try await Self.downloadWithProgress(
+                    executable: ytDlpPath,
+                    arguments: Self.extractedAudioDownloadArguments(
+                        extensionName: extensionName,
+                        outputTemplate: outputTemplate,
+                        sourceURL: track.sourceURL
+                    ),
+                    expectedFileURL: downloadsDir.appendingPathComponent("\(sourceHash).\(extensionName)"),
+                    progressHandler: progressHandler
+                )
+            }
         }
         inFlightTrackDownloads[sourceHash] = downloadTask
         let localFileURL = try await downloadTask.value
-        try? await Self.downloadThumbnail(track.thumbnailURL, to: downloadsDir)
 
         let cached = CachedTrackEntry(
             id: track.id,
@@ -154,46 +163,48 @@ actor YtDlpDownloadService {
             throw YtDlpError.notFound
         }
 
+        let sourceHash = OnlineTrackStore.hashKey(for: album.sourceURL)
+        let albumDir = Self.onlineAlbumDirectory(sourceHash: sourceHash, title: album.title)
+        if let existingAlbumDir = Self.existingUsableAlbumDirectory(at: albumDir) {
+            progressHandler?(1)
+            return existingAlbumDir
+        }
+
+        if let inFlightDownload = inFlightAlbumDownloads[sourceHash] {
+            let folderURL = try await inFlightDownload.value
+            progressHandler?(1)
+            return folderURL
+        }
+
         while activeDownloads >= maxConcurrentDownloads {
             try await Task.sleep(nanoseconds: 250_000_000)
         }
         activeDownloads += 1
-        defer { activeDownloads -= 1 }
+        defer {
+            activeDownloads -= 1
+            inFlightAlbumDownloads[sourceHash] = nil
+        }
 
+        let downloadTask = Task {
+            try await Self.downloadAlbumWithRetries(
+                executable: ytDlpPath,
+                album: album,
+                sourceHash: sourceHash,
+                finalDirectory: albumDir,
+                progressHandler: progressHandler
+            )
+        }
+        inFlightAlbumDownloads[sourceHash] = downloadTask
+
+        let folderURL = try await downloadTask.value
+        progressHandler?(1)
+        return folderURL
+    }
+
+    func existingAlbumDirectory(for album: OnlineAlbumSearchResult) -> URL? {
         let sourceHash = OnlineTrackStore.hashKey(for: album.sourceURL)
         let albumDir = Self.onlineAlbumDirectory(sourceHash: sourceHash, title: album.title)
-        if FileManager.default.fileExists(atPath: albumDir.path) {
-            try? FileManager.default.removeItem(at: albumDir)
-        }
-        try FileManager.default.createDirectory(at: albumDir, withIntermediateDirectories: true)
-        try? await Self.downloadThumbnail(album.thumbnailURL, to: albumDir)
-
-        let outputTemplate = albumDir
-            .appendingPathComponent("%(playlist_index)02d - %(title).180B.%(ext)s")
-            .path
-
-        try await runDownloadProcess(
-            executable: ytDlpPath,
-            arguments: [
-                "--newline",
-                "--yes-playlist",
-                "--ignore-errors",
-                "--format", "bestaudio/best",
-                "--extract-audio",
-                "--audio-format", "m4a",
-                "--audio-quality", "0",
-                "--output", outputTemplate,
-                album.sourceURL.absoluteString
-            ],
-            progressHandler: progressHandler
-        )
-
-        let audioFiles = try Self.audioFileURLs(in: albumDir)
-        guard !audioFiles.isEmpty else {
-            throw YtDlpError.downloadFailed("No album tracks were downloaded.")
-        }
-        progressHandler?(1)
-        return albumDir
+        return Self.existingUsableAlbumDirectory(at: albumDir)
     }
 
     func getCachedEntry(sourceHash: String) throws -> CachedTrackEntry? {
@@ -206,6 +217,37 @@ actor YtDlpDownloadService {
 
     func removeCachedEntry(localFileURL: URL) throws -> CachedTrackEntry? {
         try store.remove(localFileURL: localFileURL)
+    }
+
+    func existingThumbnailURL(for track: OnlineSearchResult) -> URL? {
+        let sourceHash = OnlineTrackStore.hashKey(for: track.sourceURL)
+        let downloadsDir = Self.onlineTrackDirectory(sourceHash: sourceHash)
+        return Self.existingThumbnailURL(in: downloadsDir)
+    }
+
+    func ensureThumbnail(for track: OnlineSearchResult) async throws -> URL? {
+        let sourceHash = OnlineTrackStore.hashKey(for: track.sourceURL)
+        let downloadsDir = Self.onlineTrackDirectory(sourceHash: sourceHash)
+        if let existingURL = Self.existingThumbnailURL(in: downloadsDir) {
+            return existingURL
+        }
+
+        for thumbnailURL in Self.thumbnailCandidates(for: track) {
+            if let savedURL = try? await Self.downloadThumbnail(thumbnailURL, to: downloadsDir) {
+                return savedURL
+            }
+        }
+
+        if let ytDlpPath = Self.locateYtDlp(),
+           let savedURL = try? await Self.downloadThumbnailWithYtDlp(
+            executable: ytDlpPath,
+            sourceURL: track.sourceURL,
+            to: downloadsDir
+           ) {
+            return savedURL
+        }
+
+        return Self.existingThumbnailURL(in: downloadsDir)
     }
 
     static func locateYtDlp() -> String? {
@@ -256,6 +298,29 @@ actor YtDlpDownloadService {
             .appendingPathComponent("\(safeFileName(title))-\(sourceHash)")
     }
 
+    private static func temporaryAlbumDirectory(sourceHash: String) -> URL {
+        onlineDownloadsBaseURL()
+            .appendingPathComponent("Albums")
+            .appendingPathComponent(".staging-\(sourceHash)-\(UUID().uuidString)")
+    }
+
+    private static func existingUsableAlbumDirectory(at directory: URL) -> URL? {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return nil }
+        let audioFiles = (try? audioFileURLs(in: directory)) ?? []
+        return audioFiles.isEmpty ? nil : directory
+    }
+
+    private static func replaceIncompleteAlbumDirectory(with stagingDirectory: URL, finalDirectory: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: finalDirectory.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        if fileManager.fileExists(atPath: finalDirectory.path) {
+            try fileManager.removeItem(at: finalDirectory)
+        }
+
+        try fileManager.moveItem(at: stagingDirectory, to: finalDirectory)
+    }
+
     private func resolveCachedTrack(sourceHash: String) throws -> CachedTrackEntry? {
         let entries = try store.loadCachedTracks()
         return entries.first { $0.sourceHash == sourceHash }
@@ -288,11 +353,140 @@ actor YtDlpDownloadService {
             .lowercased()
     }
 
-    private func audioExtension(for track: OnlineSearchResult) -> String {
+    private func preferredAudioExtension(for track: OnlineSearchResult) -> String {
         switch track.provider {
-        case .youtube, .soundcloud:
+        case .youtube:
             return "m4a"
+        case .soundcloud:
+            return "mp3"
         }
+    }
+
+    private static func preferredAudioFormat(for track: OnlineSearchResult) -> String {
+        switch track.provider {
+        case .youtube:
+            return "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]"
+        case .soundcloud:
+            return "bestaudio[ext=mp3]/bestaudio[ext=m4a]"
+        }
+    }
+
+    private static func directAudioDownloadArguments(format: String, outputTemplate: String, sourceURL: URL) -> [String] {
+        [
+            "--newline",
+            "--no-playlist",
+            "--no-mtime",
+            "--concurrent-fragments", "4",
+            "--format", format,
+            "--output", outputTemplate,
+            sourceURL.absoluteString
+        ]
+    }
+
+    private static func extractedAudioDownloadArguments(extensionName: String, outputTemplate: String, sourceURL: URL) -> [String] {
+        [
+            "--newline",
+            "--no-playlist",
+            "--no-mtime",
+            "--concurrent-fragments", "4",
+            "--format", "bestaudio/best",
+            "--extract-audio",
+            "--audio-format", extensionName,
+            "--audio-quality", "0",
+            "--output", outputTemplate,
+            sourceURL.absoluteString
+        ]
+    }
+
+    private static func albumDownloadArguments(outputTemplate: String, sourceURL: URL) -> [String] {
+        [
+            "--newline",
+            "--yes-playlist",
+            "--ignore-errors",
+            "--no-mtime",
+            "--retries", "3",
+            "--fragment-retries", "3",
+            "--concurrent-fragments", "4",
+            "--format", "bestaudio/best",
+            "--extract-audio",
+            "--audio-format", "m4a",
+            "--audio-quality", "0",
+            "--output", outputTemplate,
+            sourceURL.absoluteString
+        ]
+    }
+
+    private static func downloadAlbumWithRetries(
+        executable: String,
+        album: OnlineAlbumSearchResult,
+        sourceHash: String,
+        finalDirectory: URL,
+        progressHandler: (@Sendable (Double) -> Void)?
+    ) async throws -> URL {
+        var lastError: Error?
+
+        for (attempt, delay) in downloadRetryDelaysNanoseconds.enumerated() {
+            if delay > 0 {
+                try await Task.sleep(nanoseconds: delay)
+            }
+
+            let stagingDirectory = temporaryAlbumDirectory(sourceHash: sourceHash)
+            do {
+                let folderURL = try await downloadAlbumOnce(
+                    executable: executable,
+                    album: album,
+                    stagingDirectory: stagingDirectory,
+                    finalDirectory: finalDirectory,
+                    progressHandler: progressHandler
+                )
+                return folderURL
+            } catch {
+                lastError = error
+                try? FileManager.default.removeItem(at: stagingDirectory)
+
+                #if canImport(os)
+                Logger(subsystem: "com.nightwing", category: "YtDlp").error("Album download attempt \(attempt + 1, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                #endif
+            }
+        }
+
+        throw lastError ?? YtDlpError.downloadFailed("No album tracks were downloaded.")
+    }
+
+    private static func downloadAlbumOnce(
+        executable: String,
+        album: OnlineAlbumSearchResult,
+        stagingDirectory: URL,
+        finalDirectory: URL,
+        progressHandler: (@Sendable (Double) -> Void)?
+    ) async throws -> URL {
+        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+        _ = try? await downloadThumbnail(album.thumbnailURL, to: stagingDirectory)
+
+        let outputTemplate = stagingDirectory
+            .appendingPathComponent("%(playlist_index)02d - %(title).180B.%(ext)s")
+            .path
+
+        do {
+            try await runDownloadProcess(
+                executable: executable,
+                arguments: albumDownloadArguments(outputTemplate: outputTemplate, sourceURL: album.sourceURL),
+                progressHandler: progressHandler
+            )
+        } catch {
+            let partialAudioFiles = (try? audioFileURLs(in: stagingDirectory)) ?? []
+            guard !partialAudioFiles.isEmpty else {
+                throw error
+            }
+        }
+
+        let audioFiles = try audioFileURLs(in: stagingDirectory)
+        guard !audioFiles.isEmpty else {
+            throw YtDlpError.downloadFailed("No album tracks were downloaded.")
+        }
+
+        try replaceIncompleteAlbumDirectory(with: stagingDirectory, finalDirectory: finalDirectory)
+        return finalDirectory
     }
 
     private static func downloadWithProgress(
@@ -360,7 +554,7 @@ actor YtDlpDownloadService {
         throw YtDlpError.downloadFailed("Downloaded file was not found.")
     }
 
-    private func runDownloadProcess(
+    private static func runDownloadProcess(
         executable: String,
         arguments: [String],
         progressHandler: (@Sendable (Double) -> Void)?
@@ -622,7 +816,7 @@ actor YtDlpDownloadService {
             }
             selectedEntityKeys.insert(entityKey)
             selectedCandidates.append(candidate)
-            if selectedCandidates.count >= 8 { break }
+            if selectedCandidates.count >= 24 { break }
         }
 
         return selectedCandidates.map { candidate in
@@ -1124,10 +1318,67 @@ actor YtDlpDownloadService {
         return cleaned.isEmpty ? "Album" : String(cleaned.prefix(80))
     }
 
-    private static func downloadThumbnail(_ thumbnailURL: URL?, to directory: URL) async throws {
-        guard let thumbnailURL else { return }
+    private static func existingThumbnailURL(in directory: URL) -> URL? {
+        for ext in ["jpg", "jpeg", "png", "webp", "tif", "tiff"] {
+            let existingURL = directory.appendingPathComponent("cover").appendingPathExtension(ext)
+            if FileManager.default.fileExists(atPath: existingURL.path) {
+                return existingURL
+            }
+        }
+        return nil
+    }
+
+    private static func thumbnailCandidates(for track: OnlineSearchResult) -> [URL] {
+        var candidates: [URL] = []
+        if let thumbnailURL = track.thumbnailURL {
+            candidates.append(thumbnailURL)
+        }
+
+        if track.provider == .youtube, !track.id.isEmpty {
+            for name in ["maxresdefault", "sddefault", "hqdefault", "mqdefault", "default"] {
+                if let url = URL(string: "https://i.ytimg.com/vi/\(track.id)/\(name).jpg") {
+                    candidates.append(url)
+                }
+            }
+        }
+
+        var seen = Set<String>()
+        return candidates.filter { url in
+            let key = url.absoluteString
+            guard !seen.contains(key) else { return false }
+            seen.insert(key)
+            return true
+        }
+    }
+
+    private static func downloadThumbnailWithYtDlp(executable: String, sourceURL: URL, to directory: URL) async throws -> URL? {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        _ = try await runCommand(
+            executable: executable,
+            arguments: [
+                "--skip-download",
+                "--no-playlist",
+                "--write-thumbnail",
+                "--retries", "3",
+                "--output", directory.appendingPathComponent("cover.%(ext)s").path,
+                sourceURL.absoluteString
+            ]
+        )
+        return existingThumbnailURL(in: directory)
+    }
+
+    @discardableResult
+    private static func downloadThumbnail(_ thumbnailURL: URL?, to directory: URL) async throws -> URL? {
+        guard let thumbnailURL else { return nil }
         let (data, response) = try await URLSession.shared.data(from: thumbnailURL)
-        guard !data.isEmpty else { return }
+        if let httpResponse = response as? HTTPURLResponse {
+            guard (200..<300).contains(httpResponse.statusCode) else { return nil }
+        }
+        if let mimeType = response.mimeType?.lowercased() {
+            guard mimeType.hasPrefix("image/") else { return nil }
+        }
+        guard !data.isEmpty else { return nil }
+
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for ext in ["jpg", "jpeg", "png", "webp", "tif", "tiff"] {
             let existingURL = directory.appendingPathComponent("cover").appendingPathExtension(ext)
@@ -1135,7 +1386,11 @@ actor YtDlpDownloadService {
                 try? FileManager.default.removeItem(at: existingURL)
             }
         }
-        try data.write(to: directory.appendingPathComponent("cover").appendingPathExtension(thumbnailExtension(from: response, fallbackURL: thumbnailURL)), options: .atomic)
+        let savedURL = directory
+            .appendingPathComponent("cover")
+            .appendingPathExtension(thumbnailExtension(from: response, fallbackURL: thumbnailURL))
+        try data.write(to: savedURL, options: .atomic)
+        return savedURL
     }
 
     private static func thumbnailExtension(from response: URLResponse, fallbackURL: URL) -> String {

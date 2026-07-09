@@ -2,6 +2,7 @@ import Foundation
 
 public struct PlaybackQueueItem: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
+    public var trackID: UUID?
     public var url: URL
     public var title: String?
     public var normalizationGain: Double?
@@ -10,6 +11,7 @@ public struct PlaybackQueueItem: Identifiable, Codable, Equatable, Sendable {
 
     public init(
         id: UUID = UUID(),
+        trackID: UUID? = nil,
         url: URL,
         title: String? = nil,
         normalizationGain: Double? = nil,
@@ -17,6 +19,7 @@ public struct PlaybackQueueItem: Identifiable, Codable, Equatable, Sendable {
         playbackAnalysisVersion: Int? = nil
     ) {
         self.id = id
+        self.trackID = trackID
         self.url = url
         self.title = title
         self.normalizationGain = normalizationGain
@@ -31,6 +34,7 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
     public private(set) var isShuffled: Bool
     private var shuffledOrder: [Int]
     private var shuffledPosition: Int?
+    private var unshuffledItems: [PlaybackQueueItem]
 
     private enum CodingKeys: String, CodingKey {
         case items
@@ -38,6 +42,7 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
         case isShuffled
         case shuffledOrder
         case shuffledPosition
+        case unshuffledItems
     }
 
     public init(
@@ -45,15 +50,19 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
         currentIndex: Int? = nil,
         isShuffled: Bool = false,
         shuffledOrder: [Int] = [],
-        shuffledPosition: Int? = nil
+        shuffledPosition: Int? = nil,
+        unshuffledItems: [PlaybackQueueItem] = []
     ) {
+        let filteredShuffledOrder = shuffledOrder.filter { items.indices.contains($0) }
         self.items = items
         self.currentIndex = currentIndex.flatMap { items.indices.contains($0) ? $0 : nil }
         self.isShuffled = isShuffled
-        self.shuffledOrder = shuffledOrder.filter { items.indices.contains($0) }
-        self.shuffledPosition = shuffledPosition.flatMap { self.shuffledOrder.indices.contains($0) ? $0 : nil }
+        self.shuffledOrder = filteredShuffledOrder
+        self.shuffledPosition = shuffledPosition.flatMap { filteredShuffledOrder.indices.contains($0) ? $0 : nil }
+        self.unshuffledItems = Self.validUnshuffledItems(unshuffledItems, matching: items)
 
         if isShuffled {
+            ensureValidUnshuffledItems()
             ensureValidShuffleOrder()
         }
     }
@@ -65,13 +74,15 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
         let isShuffled = try container.decodeIfPresent(Bool.self, forKey: .isShuffled) ?? false
         let shuffledOrder = try container.decodeIfPresent([Int].self, forKey: .shuffledOrder) ?? []
         let shuffledPosition = try container.decodeIfPresent(Int.self, forKey: .shuffledPosition)
+        let unshuffledItems = try container.decodeIfPresent([PlaybackQueueItem].self, forKey: .unshuffledItems) ?? []
 
         self.init(
             items: items,
             currentIndex: currentIndex,
             isShuffled: isShuffled,
             shuffledOrder: shuffledOrder,
-            shuffledPosition: shuffledPosition
+            shuffledPosition: shuffledPosition,
+            unshuffledItems: unshuffledItems
         )
     }
 
@@ -82,6 +93,7 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
         try container.encode(isShuffled, forKey: .isShuffled)
         try container.encode(shuffledOrder, forKey: .shuffledOrder)
         try container.encodeIfPresent(shuffledPosition, forKey: .shuffledPosition)
+        try container.encode(unshuffledItems, forKey: .unshuffledItems)
     }
 
     public var isEmpty: Bool {
@@ -111,6 +123,7 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
         } else {
             clearShuffledOrder()
         }
+        clearUnshuffledItems()
     }
 
     public mutating func setCurrentItem(id: PlaybackQueueItem.ID) {
@@ -121,7 +134,13 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
     }
 
     public mutating func append(_ item: PlaybackQueueItem) {
+        if isShuffled {
+            ensureValidUnshuffledItems()
+        }
         items.append(item)
+        if isShuffled {
+            unshuffledItems.append(item)
+        }
         if currentIndex == nil {
             currentIndex = items.startIndex
         }
@@ -129,20 +148,36 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
 
     public mutating func append(contentsOf newItems: [PlaybackQueueItem]) {
         guard !newItems.isEmpty else { return }
+        if isShuffled {
+            ensureValidUnshuffledItems()
+        }
         let shouldSelectFirst = currentIndex == nil && items.isEmpty
         items.append(contentsOf: newItems)
+        if isShuffled {
+            unshuffledItems.append(contentsOf: newItems)
+        }
         if shouldSelectFirst {
             currentIndex = items.startIndex
         }
     }
 
     public mutating func playNext(_ item: PlaybackQueueItem) {
+        if isShuffled {
+            ensureValidUnshuffledItems()
+        }
         guard let currentIndex else {
             append(item)
             return
         }
 
-        items.insert(item, at: min(currentIndex + 1, items.endIndex))
+        let insertionIndex = min(currentIndex + 1, items.endIndex)
+        items.insert(item, at: insertionIndex)
+        if isShuffled {
+            let currentItemID = items[currentIndex].id
+            let unshuffledInsertionIndex = unshuffledItems.firstIndex { $0.id == currentItemID }
+                .map { min($0 + 1, unshuffledItems.endIndex) } ?? unshuffledItems.endIndex
+            unshuffledItems.insert(item, at: unshuffledInsertionIndex)
+        }
     }
 
     public mutating func removeUpcoming() {
@@ -155,6 +190,7 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
         let keepThroughIndex = min(currentIndex + 1, items.endIndex)
         items.removeSubrange(keepThroughIndex..<items.endIndex)
         clearShuffledOrder()
+        clearUnshuffledItems()
     }
 
     @discardableResult
@@ -172,15 +208,19 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
             }
         }
 
+        if isShuffled {
+            unshuffledItems.removeAll { $0.id == id }
+        }
         clearShuffledOrder()
 
         return removed
     }
 
-    public mutating func move(from source: IndexSet, to destination: Int) {
+    @discardableResult
+    public mutating func move(from source: IndexSet, to destination: Int) -> Bool {
         let movingCurrentID = currentItem?.id
         let offsets = source.filter { items.indices.contains($0) }.sorted()
-        guard !offsets.isEmpty else { return }
+        guard !offsets.isEmpty else { return false }
 
         let movedItems = offsets.map { items[$0] }
         for offset in offsets.reversed() {
@@ -192,19 +232,27 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
             max(destination - removedBeforeDestination, items.startIndex),
             items.endIndex
         )
+        guard offsets != Array(adjustedDestination..<(adjustedDestination + offsets.count)) else {
+            items.insert(contentsOf: movedItems, at: adjustedDestination)
+            return false
+        }
+
         items.insert(contentsOf: movedItems, at: adjustedDestination)
 
         if let movingCurrentID {
             currentIndex = items.firstIndex { $0.id == movingCurrentID }
         }
         clearShuffledOrder()
+        clearUnshuffledItems()
+        return true
     }
 
-    public mutating func moveItem(id: PlaybackQueueItem.ID, by offset: Int) {
-        guard offset != 0, let sourceIndex = items.firstIndex(where: { $0.id == id }) else { return }
+    @discardableResult
+    public mutating func moveItem(id: PlaybackQueueItem.ID, by offset: Int) -> Bool {
+        guard offset != 0, let sourceIndex = items.firstIndex(where: { $0.id == id }) else { return false }
 
         let destinationIndex = min(max(sourceIndex + offset, items.startIndex), items.count - 1)
-        guard sourceIndex != destinationIndex else { return }
+        guard sourceIndex != destinationIndex else { return false }
 
         let movingCurrentID = currentItem?.id
         let item = items.remove(at: sourceIndex)
@@ -213,12 +261,15 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
             currentIndex = items.firstIndex { $0.id == movingCurrentID }
         }
         clearShuffledOrder()
+        clearUnshuffledItems()
+        return true
     }
 
-    public mutating func moveItem(id: PlaybackQueueItem.ID, to destinationIndex: Int) {
-        guard let sourceIndex = items.firstIndex(where: { $0.id == id }) else { return }
+    @discardableResult
+    public mutating func moveItem(id: PlaybackQueueItem.ID, to destinationIndex: Int) -> Bool {
+        guard let sourceIndex = items.firstIndex(where: { $0.id == id }) else { return false }
         let clampedDestination = min(max(destinationIndex, items.startIndex), items.count - 1)
-        guard sourceIndex != clampedDestination else { return }
+        guard sourceIndex != clampedDestination else { return false }
 
         let movingCurrentID = currentItem?.id
         let item = items.remove(at: sourceIndex)
@@ -227,6 +278,8 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
             currentIndex = items.firstIndex { $0.id == movingCurrentID }
         }
         clearShuffledOrder()
+        clearUnshuffledItems()
+        return true
     }
 
     @discardableResult
@@ -260,6 +313,7 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
         if isShuffled {
             shuffleVisibleQueueKeepingCurrent()
         } else {
+            restoreUnshuffledOrderKeepingCurrent()
             clearShuffledOrder()
         }
     }
@@ -272,6 +326,7 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
         }
 
         if let currentIndex, items.indices.contains(currentIndex) {
+            unshuffledItems = items
             let current = items[currentIndex]
             let remaining = items.indices
                 .filter { $0 != currentIndex }
@@ -280,6 +335,7 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
             items = [current] + remaining
             self.currentIndex = items.startIndex
         } else {
+            unshuffledItems = items
             items.shuffle()
             currentIndex = items.startIndex
         }
@@ -344,6 +400,46 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
     private mutating func clearShuffledOrder() {
         shuffledOrder = []
         shuffledPosition = nil
+    }
+
+    private mutating func clearUnshuffledItems() {
+        unshuffledItems = []
+    }
+
+    private mutating func restoreUnshuffledOrderKeepingCurrent() {
+        ensureValidUnshuffledItems()
+        guard !unshuffledItems.isEmpty else { return }
+
+        let currentItemID = currentItem?.id
+        items = unshuffledItems
+        currentIndex = currentItemID.flatMap { id in
+            items.firstIndex { $0.id == id }
+        } ?? currentIndex.flatMap { items.indices.contains($0) ? $0 : nil }
+        clearUnshuffledItems()
+    }
+
+    private mutating func ensureValidUnshuffledItems() {
+        let validItems = Self.validUnshuffledItems(unshuffledItems, matching: items)
+        if validItems.count == items.count {
+            unshuffledItems = validItems
+        } else {
+            unshuffledItems = items
+        }
+    }
+
+    private static func validUnshuffledItems(
+        _ candidateItems: [PlaybackQueueItem],
+        matching visibleItems: [PlaybackQueueItem]
+    ) -> [PlaybackQueueItem] {
+        let visibleIDs = visibleItems.map(\.id)
+        let visibleIDSet = Set(visibleIDs)
+        let candidateIDs = candidateItems.map(\.id)
+        guard Set(candidateIDs) == visibleIDSet,
+              candidateIDs.count == visibleIDs.count else {
+            return []
+        }
+
+        return candidateItems
     }
 
     private mutating func remapShuffledOrderAfterInsert(at insertedIndex: Int) {

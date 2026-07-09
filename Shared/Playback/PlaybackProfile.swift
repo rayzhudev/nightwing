@@ -34,57 +34,17 @@ public struct PlaybackProfile: Codable, Equatable, Sendable {
             subtitle: "Original",
             speed: normalSpeed,
             semitoneOffset: 0
-        ),
-        PlaybackSpeedPreset(
-            id: "plus-2",
-            title: "+2",
-            subtitle: "1.122x",
-            speed: speed(forSemitoneOffset: 2),
-            semitoneOffset: 2
-        ),
-        PlaybackSpeedPreset(
-            id: "plus-3",
-            title: "+3",
-            subtitle: "1.189x",
-            speed: speed(forSemitoneOffset: 3),
-            semitoneOffset: 3
-        ),
-        PlaybackSpeedPreset(
-            id: "plus-4",
-            title: "+4",
-            subtitle: "1.260x",
-            speed: speed(forSemitoneOffset: 4),
-            semitoneOffset: 4
-        ),
-        PlaybackSpeedPreset(
-            id: "nightcore",
-            title: "√2",
-            subtitle: "1.414x, +6 st",
-            speed: nightcoreSpeed,
-            semitoneOffset: 6
-        ),
-        PlaybackSpeedPreset(
-            id: "plus-7",
-            title: "+7",
-            subtitle: "1.498x",
-            speed: speed(forSemitoneOffset: 7),
-            semitoneOffset: 7
-        ),
-        PlaybackSpeedPreset(
-            id: "plus-9",
-            title: "+9",
-            subtitle: "1.682x",
-            speed: speed(forSemitoneOffset: 9),
-            semitoneOffset: 9
-        ),
-        PlaybackSpeedPreset(
-            id: "octave",
-            title: "2x",
-            subtitle: "+12 st",
-            speed: speed(forSemitoneOffset: 12),
-            semitoneOffset: 12
         )
-    ]
+    ] + (1...12).map { semitoneOffset in
+        let speed = speed(forSemitoneOffset: semitoneOffset)
+        return PlaybackSpeedPreset(
+            id: "plus-\(semitoneOffset)",
+            title: "+\(semitoneOffset)",
+            subtitle: speedLabel(forSemitoneOffset: semitoneOffset),
+            speed: speed,
+            semitoneOffset: semitoneOffset
+        )
+    }
 
     public static let normal = PlaybackProfile(
         name: "Normal",
@@ -180,10 +140,54 @@ public struct PlaybackProfile: Codable, Equatable, Sendable {
     }
 
     public static func speedLabel(for speed: Double) -> String {
-        if let preset = speedPreset(matching: speed) {
-            return preset.title
+        let clampedSpeed = min(max(speed, 0.25), 4.0)
+
+        if let preset = speedPreset(matching: clampedSpeed) {
+            return speedLabel(forSemitoneOffset: preset.semitoneOffset)
         }
 
-        return String(format: "%.2fx", min(max(speed, 0.25), 4.0))
+        let roundedWholeSpeed = clampedSpeed.rounded()
+        if abs(clampedSpeed - roundedWholeSpeed) <= 0.006 {
+            return String(format: "%.0fx", roundedWholeSpeed)
+        }
+
+        let roundedCents = Int((1200.0 * log2(clampedSpeed)).rounded())
+        return "≈\(powerOfTwoLabel(numerator: roundedCents, denominator: 1200))x"
+    }
+
+    public static func speedLabel(forSemitoneOffset semitoneOffset: Int) -> String {
+        powerOfTwoLabel(numerator: semitoneOffset, denominator: 12) + "x"
+    }
+
+    private static func powerOfTwoLabel(numerator: Int, denominator: Int) -> String {
+        guard numerator != 0 else { return "1" }
+        guard numerator != denominator else { return "2" }
+
+        let divisor = greatestCommonDivisor(abs(numerator), abs(denominator))
+        let simplifiedNumerator = numerator / divisor
+        let simplifiedDenominator = denominator / divisor
+
+        if simplifiedNumerator == 1 && simplifiedDenominator == 2 {
+            return "√2"
+        }
+
+        if simplifiedDenominator == 1 {
+            return "2^\(simplifiedNumerator)"
+        }
+
+        return "2^{\(simplifiedNumerator)/\(simplifiedDenominator)}"
+    }
+
+    private static func greatestCommonDivisor(_ lhs: Int, _ rhs: Int) -> Int {
+        var a = lhs
+        var b = rhs
+
+        while b != 0 {
+            let remainder = a % b
+            a = b
+            b = remainder
+        }
+
+        return max(a, 1)
     }
 }

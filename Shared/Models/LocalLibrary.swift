@@ -1,10 +1,33 @@
 import Foundation
 
+public struct PlaybackResumeState: Codable, Equatable, Sendable {
+    public var currentTime: TimeInterval
+    public var wasPlaying: Bool
+    public var repeatMode: PlaybackRepeatMode
+    public var profile: PlaybackProfile
+    public var updatedAt: Date
+
+    public init(
+        currentTime: TimeInterval = 0,
+        wasPlaying: Bool = false,
+        repeatMode: PlaybackRepeatMode = .none,
+        profile: PlaybackProfile = .nightcore,
+        updatedAt: Date = Date()
+    ) {
+        self.currentTime = currentTime
+        self.wasPlaying = wasPlaying
+        self.repeatMode = repeatMode
+        self.profile = profile
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct LocalLibrary: Codable, Equatable, Sendable {
     public var tracks: [Track]
     public var playlists: [Playlist]
     public var folderSources: [FolderSource]
     public var queue: PlaybackQueue
+    public var playbackResumeState: PlaybackResumeState?
     public var playbackProfiles: [PlaybackProfile]
     public var selectedPlaybackProfileName: String?
     public var schemaVersion: Int
@@ -14,6 +37,7 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
         playlists: [Playlist] = [],
         folderSources: [FolderSource] = [],
         queue: PlaybackQueue = PlaybackQueue(),
+        playbackResumeState: PlaybackResumeState? = nil,
         playbackProfiles: [PlaybackProfile] = [.normal, .nightcore],
         selectedPlaybackProfileName: String? = nil,
         schemaVersion: Int = 1
@@ -22,6 +46,7 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
         self.playlists = playlists
         self.folderSources = folderSources
         self.queue = queue
+        self.playbackResumeState = playbackResumeState
         self.playbackProfiles = playbackProfiles
         self.selectedPlaybackProfileName = selectedPlaybackProfileName
         self.schemaVersion = schemaVersion
@@ -105,21 +130,27 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
         playlists[index].dateModified = Date()
     }
 
-    public mutating func movePlaylistItem(id itemID: PlaylistItem.ID, inPlaylist playlistID: Playlist.ID, to destinationIndex: Int) {
+    @discardableResult
+    public mutating func movePlaylistItem(id itemID: PlaylistItem.ID, inPlaylist playlistID: Playlist.ID, to destinationIndex: Int) -> Bool {
         guard let playlistIndex = playlists.firstIndex(where: { $0.id == playlistID }),
               let sourceIndex = playlists[playlistIndex].items.firstIndex(where: { $0.id == itemID }),
-              !playlists[playlistIndex].items.isEmpty else { return }
+              !playlists[playlistIndex].items.isEmpty else { return false }
 
         let clampedDestination = min(max(destinationIndex, playlists[playlistIndex].items.startIndex), playlists[playlistIndex].items.count - 1)
-        guard sourceIndex != clampedDestination else { return }
+        guard sourceIndex != clampedDestination else { return false }
 
         let item = playlists[playlistIndex].items.remove(at: sourceIndex)
         playlists[playlistIndex].items.insert(item, at: clampedDestination)
         playlists[playlistIndex].dateModified = Date()
+        return true
     }
 
     public mutating func markMissingTracks(fileManager: FileManager = .default) {
         for index in tracks.indices {
+            guard tracks[index].fileURL.isFileURL else {
+                tracks[index].availability = .available
+                continue
+            }
             tracks[index].availability = fileManager.fileExists(atPath: tracks[index].fileURL.path) ? .available : .missing
         }
     }

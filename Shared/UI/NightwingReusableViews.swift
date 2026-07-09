@@ -1,7 +1,11 @@
 import AVFoundation
+import Combine
 import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import MediaPlayer
+#endif
 #if canImport(AppKit)
 import AppKit
 private typealias NightwingPlatformImage = NSImage
@@ -10,12 +14,24 @@ import UIKit
 private typealias NightwingPlatformImage = UIImage
 #endif
 
+private struct PlaybackResumeSnapshot: Equatable {
+    var queue: PlaybackQueue
+    var resumeState: PlaybackResumeState?
+}
+
 @MainActor
 final class NightwingAppModel: ObservableObject {
     private static let playbackAnalysisThrottleNanoseconds: UInt64 = 120_000_000
     private static let playbackAnalysisSaveBatchSize = 12
+    private static let playbackResumeSaveInterval: TimeInterval = 5
 
-    @Published private(set) var library: LocalLibrary = .empty
+    @Published private(set) var library: LocalLibrary = .empty {
+        didSet {
+            if library.tracks != oldValue.tracks {
+                needsLibraryCacheRebuild = true
+            }
+        }
+    }
     @Published var statusMessage: String?
     @Published var isImporting = false
     @Published private(set) var optimisticPlaybackTrackID: Track.ID?
@@ -32,16 +48,40 @@ final class NightwingAppModel: ObservableObject {
     private let onlineSearchService = YtDlpDownloadService()
     private var onlineSearchTask: Task<Void, Never>?
     private var pendingOnlineTrackActions: [OnlineSearchResult.ID: [(Track) -> Void]] = [:]
+    private var onlineTrackDownloadTasks: [OnlineSearchResult.ID: Task<Void, Never>] = [:]
+    private var onlineAlbumDownloadTasks: [OnlineAlbumSearchResult.ID: Task<Void, Never>] = [:]
+    private var onlineTrackDownloadStates: [OnlineSearchResult.ID: OnlineSearchResult.DownloadState] = [:]
+    private var onlineAlbumDownloadStates: [OnlineAlbumSearchResult.ID: OnlineSearchResult.DownloadState] = [:]
     #endif
     private let store: JSONLocalLibraryStore?
     private var folderRefreshTimer: Timer?
     private var playbackAnalysisTask: Task<Void, Never>?
     private var playbackRequestID = UUID()
+    private var playbackStateCancellable: AnyCancellable?
+    private var playbackResumeSaveTask: Task<Void, Never>?
+    private var lastPlaybackResumeSaveDate = Date.distantPast
+    private var lastSavedPlaybackResumeSnapshot: PlaybackResumeSnapshot?
+    private var isRestoringPlayback = false
+    private var tracksByID: [Track.ID: Track] = [:]
+    private var tracksByStandardizedPath: [String: Track] = [:]
+    private var sortedTracksCache: [Track] = []
+    private var albumGroupsCache: [LibraryAlbumGroup] = []
+    private var recentlyAddedTracksCache: [Track] = []
+    private var onlineDownloadedTracksCache: [Track] = []
+    private var needsLibraryCacheRebuild = true
+    #if os(iOS)
+    private var musicLibraryChangeObserver: NSObjectProtocol?
+    private var isSyncingSystemMusicLibrary = false
+    #endif
 
     init() {
         store = try? JSONLocalLibraryStore.defaultStore()
+        observePlaybackState()
         Task {
             await loadLibrary()
+            #if os(iOS)
+            await importSystemMusicLibraryIfPossible(requestAuthorization: true, showStatus: true)
+            #endif
             refreshOpenedFolders()
         }
         startFolderRefreshTimer()
@@ -50,15 +90,22 @@ final class NightwingAppModel: ObservableObject {
     deinit {
         folderRefreshTimer?.invalidate()
         playbackAnalysisTask?.cancel()
+        playbackStateCancellable?.cancel()
+        playbackResumeSaveTask?.cancel()
         #if os(macOS)
         onlineSearchTask?.cancel()
+        #endif
+        #if os(iOS)
+        if let musicLibraryChangeObserver {
+            NotificationCenter.default.removeObserver(musicLibraryChangeObserver)
+        }
+        MPMediaLibrary.default().endGeneratingLibraryChangeNotifications()
         #endif
     }
 
     var sortedTracks: [Track] {
-        library.tracks.sorted {
-            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-        }
+        rebuildLibraryCacheIfNeeded()
+        return sortedTracksCache
     }
 
     var isPlaybackStarting: Bool {
@@ -66,44 +113,26 @@ final class NightwingAppModel: ObservableObject {
     }
 
     var albumGroups: [LibraryAlbumGroup] {
-        Dictionary(grouping: library.tracks, by: Self.albumKey(for:))
-            .map { key, tracks in
-                let sortedAlbumTracks = tracks.sorted(by: Self.albumTrackSort)
-                return LibraryAlbumGroup(
-                    id: key,
-                    title: sortedAlbumTracks.first.map(Self.albumTitle(for:)) ?? "Unknown Album",
-                    tracks: sortedAlbumTracks
-                )
-            }
-            .sorted {
-                let artistComparison = $0.artistSummary.localizedCaseInsensitiveCompare($1.artistSummary)
-                if artistComparison != .orderedSame {
-                    return artistComparison == .orderedAscending
-                }
-
-                if let lhsYear = $0.releaseYear, let rhsYear = $1.releaseYear, lhsYear != rhsYear {
-                    return lhsYear < rhsYear
-                }
-
-                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
+        rebuildLibraryCacheIfNeeded()
+        return albumGroupsCache
     }
 
     var recentlyAddedTracks: [Track] {
-        library.tracks
-            .sorted { $0.dateAdded > $1.dateAdded }
-            .prefix(12)
-            .map { $0 }
+        rebuildLibraryCacheIfNeeded()
+        return recentlyAddedTracksCache
     }
 
     var onlineDownloadedTracks: [Track] {
-        library.tracks
-            .filter { $0.fileURL.standardizedFileURL.path.contains("/Nightwing/Online Downloads/") }
-            .sorted { $0.dateAdded > $1.dateAdded }
+        rebuildLibraryCacheIfNeeded()
+        return onlineDownloadedTracksCache
     }
 
     func isOnlineDownloadedTrack(_ track: Track) -> Bool {
-        track.fileURL.standardizedFileURL.path.contains("/Nightwing/Online Downloads/")
+        Self.isOnlineDownloadedTrack(track)
+    }
+
+    func isOnlineAlbumDownloadTrack(_ track: Track) -> Bool {
+        Self.isOnlineAlbumDownloadTrack(track)
     }
 
     func hasDownloadedArtwork(for track: Track) -> Bool {
@@ -123,6 +152,7 @@ final class NightwingAppModel: ObservableObject {
     func filteredTracks(matching query: String) -> [Track] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return sortedTracks }
+        let loweredQuery = trimmedQuery.lowercased()
 
         return sortedTracks.filter { track in
             [
@@ -134,13 +164,14 @@ final class NightwingAppModel: ObservableObject {
                 track.fileURL.lastPathComponent
             ]
             .compactMap { $0?.lowercased() }
-            .contains { $0.contains(trimmedQuery.lowercased()) }
+            .contains { $0.contains(loweredQuery) }
         }
     }
 
     func filteredAlbumGroups(matching query: String) -> [LibraryAlbumGroup] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return albumGroups }
+        let loweredQuery = trimmedQuery.lowercased()
 
         return albumGroups.filter { album in
             let searchableValues = [
@@ -158,7 +189,7 @@ final class NightwingAppModel: ObservableObject {
 
             return searchableValues
                 .map { $0.lowercased() }
-                .contains { $0.contains(trimmedQuery.lowercased()) }
+                .contains { $0.contains(loweredQuery) }
         }
     }
 
@@ -186,7 +217,7 @@ final class NightwingAppModel: ObservableObject {
                 let albums = try await albumResults
                 guard !Task.isCancelled else { return }
                 onlineSearchResults = await resultsWithCacheState(results)
-                onlineAlbumResults = albums
+                onlineAlbumResults = await albumsWithDownloadState(albums)
             } catch {
                 guard !Task.isCancelled else { return }
                 onlineSearchResults = []
@@ -218,11 +249,11 @@ final class NightwingAppModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard let cached = try? await onlineSearchService.getCachedEntry(sourceHash: sourceHash) else {
-                updateOnlineDownloadState(for: result.id, state: .idle)
+                setOnlineDownloadState(for: result.id, state: .idle)
                 return
             }
             await deleteOnlineDownloadedFile(URL(fileURLWithPath: cached.localFileURL))
-            updateOnlineDownloadState(for: result.id, state: .idle)
+            setOnlineDownloadState(for: result.id, state: .idle)
         }
     }
 
@@ -233,28 +264,54 @@ final class NightwingAppModel: ObservableObject {
         }
     }
 
-    func downloadOnlineAlbum(_ album: OnlineAlbumSearchResult) {
-        guard let index = onlineAlbumResults.firstIndex(where: { $0.id == album.id }) else { return }
-        onlineAlbumResults[index].downloadState = .downloading(progress: 0)
-        let albumID = album.id
+    func deleteOnlineDownloadedAlbum(_ album: LibraryAlbumGroup) {
+        let albumTracks = album.tracks.filter(Self.isOnlineAlbumDownloadTrack)
+        guard let firstTrack = albumTracks.first else { return }
+        let albumFolderURL = firstTrack.fileURL.deletingLastPathComponent()
 
         Task { @MainActor [weak self] in
+            await self?.deleteOnlineDownloadedAlbumFolder(albumFolderURL, tracks: albumTracks)
+        }
+    }
+
+    func downloadOnlineAlbum(_ album: OnlineAlbumSearchResult) {
+        let albumID = album.id
+
+        if case let .completed(folderURL) = onlineAlbumDownloadState(for: album) {
+            Task { @MainActor [weak self] in
+                await self?.importDownloadedOnlineAlbum(folderURL, fallback: album)
+            }
+            return
+        }
+
+        if onlineAlbumDownloadTasks[albumID] != nil {
+            setOnlineAlbumDownloadState(for: albumID, state: onlineAlbumDownloadStates[albumID] ?? .downloading(progress: 0))
+            return
+        }
+
+        setOnlineAlbumDownloadState(for: albumID, state: .downloading(progress: 0))
+
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.onlineAlbumDownloadTasks[albumID] = nil
+            }
 
             do {
                 let albumFolderURL = try await onlineSearchService.downloadAlbum(album) { progress in
                     Task { @MainActor [weak self] in
-                        self?.updateOnlineAlbumDownloadState(for: albumID, state: .downloading(progress: progress))
+                        self?.setOnlineAlbumDownloadState(for: albumID, state: .downloading(progress: progress))
                     }
                 }
 
-                updateOnlineAlbumDownloadState(for: albumID, state: .completed(fileURL: albumFolderURL))
+                setOnlineAlbumDownloadState(for: albumID, state: .completed(fileURL: albumFolderURL))
                 await importDownloadedOnlineAlbum(albumFolderURL, fallback: album)
             } catch {
-                updateOnlineAlbumDownloadState(for: albumID, state: .failed(error.localizedDescription))
+                setOnlineAlbumDownloadState(for: albumID, state: .failed(error.localizedDescription))
                 statusMessage = "Album download failed: \(error.localizedDescription)"
             }
         }
+        onlineAlbumDownloadTasks[albumID] = task
     }
 
     func playOnlineTrack(_ result: OnlineSearchResult) {
@@ -274,16 +331,15 @@ final class NightwingAppModel: ObservableObject {
     }
 
     private func prepareOnlineTrack(_ result: OnlineSearchResult, autoplay: Bool, completion: ((Track) -> Void)? = nil) {
-        guard let index = onlineSearchResults.firstIndex(where: { $0.id == result.id }) else { return }
         let sourceID = result.id
         let action: ((Track) -> Void)? = (autoplay || completion != nil) ? { [weak self] track in
             if autoplay {
-                self?.play(track)
+                self?.play(track, within: [track])
             }
             completion?(track)
         } : nil
 
-        if case let .completed(fileURL) = onlineSearchResults[index].downloadState {
+        if case let .completed(fileURL) = onlineTrackDownloadState(for: result) {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let track = await importDownloadedOnlineTrack(fileURL, fallback: result) {
@@ -293,10 +349,11 @@ final class NightwingAppModel: ObservableObject {
             return
         }
 
-        if case .downloading = onlineSearchResults[index].downloadState {
+        if onlineTrackDownloadTasks[sourceID] != nil || onlineTrackDownloadState(for: result).isDownloading {
             if let action {
                 appendPendingOnlineTrackAction(action, for: sourceID)
             }
+            setOnlineDownloadState(for: sourceID, state: onlineTrackDownloadStates[sourceID] ?? .downloading(progress: 0))
             return
         }
 
@@ -304,28 +361,32 @@ final class NightwingAppModel: ObservableObject {
             appendPendingOnlineTrackAction(action, for: sourceID)
         }
 
-        onlineSearchResults[index].downloadState = .downloading(progress: 0)
+        setOnlineDownloadState(for: sourceID, state: .downloading(progress: 0))
 
-        Task { @MainActor [weak self] in
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.onlineTrackDownloadTasks[sourceID] = nil
+            }
 
             do {
                 let fileURL = try await onlineSearchService.download(result) { progress in
                     Task { @MainActor [weak self] in
-                        self?.updateOnlineDownloadState(for: sourceID, state: .downloading(progress: progress))
+                        self?.setOnlineDownloadState(for: sourceID, state: .downloading(progress: progress))
                     }
                 }
 
-                updateOnlineDownloadState(for: sourceID, state: .completed(fileURL: fileURL))
+                setOnlineDownloadState(for: sourceID, state: .completed(fileURL: fileURL))
                 if let track = await importDownloadedOnlineTrack(fileURL, fallback: result) {
                     runPendingOnlineTrackActions(for: sourceID, track: track)
                 }
             } catch {
                 pendingOnlineTrackActions[sourceID] = nil
-                updateOnlineDownloadState(for: sourceID, state: .failed(error.localizedDescription))
+                setOnlineDownloadState(for: sourceID, state: .failed(error.localizedDescription))
                 statusMessage = "Download failed: \(error.localizedDescription)"
             }
         }
+        onlineTrackDownloadTasks[sourceID] = task
     }
 
     private func runPendingOnlineTrackActions(for id: OnlineSearchResult.ID, track: Track) {
@@ -336,16 +397,47 @@ final class NightwingAppModel: ObservableObject {
     }
 
     private func appendPendingOnlineTrackAction(_ action: @escaping (Track) -> Void, for id: OnlineSearchResult.ID) {
-        guard pendingOnlineTrackActions[id]?.isEmpty != false else { return }
         pendingOnlineTrackActions[id, default: []].append(action)
     }
 
-    private func updateOnlineDownloadState(for id: OnlineSearchResult.ID, state: OnlineSearchResult.DownloadState) {
+    private func onlineTrackDownloadState(for result: OnlineSearchResult) -> OnlineSearchResult.DownloadState {
+        if let state = onlineTrackDownloadStates[result.id] {
+            return state
+        }
+        if let visibleResult = onlineSearchResults.first(where: { $0.id == result.id }) {
+            return visibleResult.downloadState
+        }
+        return result.downloadState
+    }
+
+    private func onlineAlbumDownloadState(for album: OnlineAlbumSearchResult) -> OnlineSearchResult.DownloadState {
+        if let state = onlineAlbumDownloadStates[album.id] {
+            return state
+        }
+        if let visibleAlbum = onlineAlbumResults.first(where: { $0.id == album.id }) {
+            return visibleAlbum.downloadState
+        }
+        return album.downloadState
+    }
+
+    private func setOnlineDownloadState(for id: OnlineSearchResult.ID, state: OnlineSearchResult.DownloadState) {
+        if state.isIdle {
+            onlineTrackDownloadStates[id] = nil
+        } else {
+            onlineTrackDownloadStates[id] = state
+        }
+
         guard let index = onlineSearchResults.firstIndex(where: { $0.id == id }) else { return }
         onlineSearchResults[index].downloadState = state
     }
 
-    private func updateOnlineAlbumDownloadState(for id: OnlineAlbumSearchResult.ID, state: OnlineSearchResult.DownloadState) {
+    private func setOnlineAlbumDownloadState(for id: OnlineAlbumSearchResult.ID, state: OnlineSearchResult.DownloadState) {
+        if state.isIdle {
+            onlineAlbumDownloadStates[id] = nil
+        } else {
+            onlineAlbumDownloadStates[id] = state
+        }
+
         guard let index = onlineAlbumResults.firstIndex(where: { $0.id == id }) else { return }
         onlineAlbumResults[index].downloadState = state
     }
@@ -379,10 +471,15 @@ final class NightwingAppModel: ObservableObject {
             if FileManager.default.fileExists(atPath: deleteURL.path) {
                 try FileManager.default.removeItem(at: deleteURL)
             }
+            clearCompletedDownloadStates(matchingDeletedURL: deleteURL, originalURL: standardizedURL)
             for resultIndex in onlineSearchResults.indices {
-                if case let .completed(completedURL) = onlineSearchResults[resultIndex].downloadState,
-                   completedURL.standardizedFileURL.path == standardizedURL.path {
+                if completedDownloadState(onlineSearchResults[resultIndex].downloadState, matchesDeletedURL: deleteURL, originalURL: standardizedURL) {
                     onlineSearchResults[resultIndex].downloadState = .idle
+                }
+            }
+            for albumIndex in onlineAlbumResults.indices {
+                if completedDownloadState(onlineAlbumResults[albumIndex].downloadState, matchesDeletedURL: deleteURL, originalURL: standardizedURL) {
+                    onlineAlbumResults[albumIndex].downloadState = .idle
                 }
             }
             Task {
@@ -394,6 +491,61 @@ final class NightwingAppModel: ObservableObject {
         }
     }
 
+    private func deleteOnlineDownloadedAlbumFolder(_ folderURL: URL, tracks: [Track]) async {
+        let standardizedURL = folderURL.standardizedFileURL
+
+        for track in tracks {
+            library.deleteTrack(id: track.id)
+        }
+
+        do {
+            if FileManager.default.fileExists(atPath: standardizedURL.path) {
+                try FileManager.default.removeItem(at: standardizedURL)
+            }
+            clearCompletedDownloadStates(matchingDeletedURL: standardizedURL, originalURL: standardizedURL)
+            for albumIndex in onlineAlbumResults.indices {
+                if completedDownloadState(onlineAlbumResults[albumIndex].downloadState, matchesDeletedURL: standardizedURL, originalURL: standardizedURL) {
+                    onlineAlbumResults[albumIndex].downloadState = .idle
+                }
+            }
+            Task {
+                await persistLibrary()
+            }
+            statusMessage = "Deleted online album download."
+        } catch {
+            statusMessage = "Could not delete online album download: \(error.localizedDescription)"
+        }
+    }
+
+    private func clearCompletedDownloadStates(matchingDeletedURL deletedURL: URL, originalURL: URL) {
+        let trackIDsToClear = onlineTrackDownloadStates.compactMap { id, state in
+            completedDownloadState(state, matchesDeletedURL: deletedURL, originalURL: originalURL) ? id : nil
+        }
+        for id in trackIDsToClear {
+            onlineTrackDownloadStates[id] = nil
+        }
+
+        let albumIDsToClear = onlineAlbumDownloadStates.compactMap { id, state in
+            completedDownloadState(state, matchesDeletedURL: deletedURL, originalURL: originalURL) ? id : nil
+        }
+        for id in albumIDsToClear {
+            onlineAlbumDownloadStates[id] = nil
+        }
+    }
+
+    private func completedDownloadState(_ state: OnlineSearchResult.DownloadState, matchesDeletedURL deletedURL: URL, originalURL: URL) -> Bool {
+        guard let completedURL = state.completedFileURL else { return false }
+
+        let completedPath = completedURL.standardizedFileURL.path
+        let deletedPath = deletedURL.standardizedFileURL.path
+        let originalPath = originalURL.standardizedFileURL.path
+
+        return completedPath == originalPath
+            || completedPath == deletedPath
+            || completedPath.hasPrefix(deletedPath + "/")
+            || originalPath.hasPrefix(completedPath + "/")
+    }
+
     private func resultsWithCacheState(_ results: [OnlineSearchResult]) async -> [OnlineSearchResult] {
         var updatedResults = results
         let cachedEntries = (try? await onlineSearchService.getAllCachedEntries()) ?? []
@@ -403,6 +555,11 @@ final class NightwingAppModel: ObservableObject {
         }
 
         for index in updatedResults.indices {
+            if let state = onlineTrackDownloadStates[updatedResults[index].id] {
+                updatedResults[index].downloadState = state
+                continue
+            }
+
             let hash = OnlineTrackStore.hashKey(for: updatedResults[index].sourceURL)
             guard let cached = entriesByHash[hash] else { continue }
             let fileURL = URL(fileURLWithPath: cached.localFileURL)
@@ -412,35 +569,125 @@ final class NightwingAppModel: ObservableObject {
         return updatedResults
     }
 
+    private func albumsWithDownloadState(_ albums: [OnlineAlbumSearchResult]) async -> [OnlineAlbumSearchResult] {
+        var updatedAlbums = albums
+
+        for index in updatedAlbums.indices {
+            if let state = onlineAlbumDownloadStates[updatedAlbums[index].id] {
+                updatedAlbums[index].downloadState = state
+                continue
+            }
+
+            if let existingDirectory = await onlineSearchService.existingAlbumDirectory(for: updatedAlbums[index]) {
+                updatedAlbums[index].downloadState = .completed(fileURL: existingDirectory)
+            }
+        }
+
+        return updatedAlbums
+    }
+
     private func importDownloadedOnlineTrack(_ fileURL: URL, fallback result: OnlineSearchResult) async -> Track? {
         if let existingTrack = library.tracks.first(where: { $0.fileURL.standardizedFileURL.path == fileURL.standardizedFileURL.path }) {
+            scheduleOnlineArtworkFinalization(for: existingTrack.id, source: result)
             return existingTrack
         }
 
-        let importResult = await importService.importFiles(at: [fileURL], albumOverride: "Online Downloads")
-        var importedTracks = importResult.tracks
-        if importedTracks.indices.contains(0) {
-            if importedTracks[0].title == fileURL.deletingPathExtension().lastPathComponent {
-                importedTracks[0].title = result.title
-            }
-            if importedTracks[0].artist == nil {
-                importedTracks[0].artist = result.artist
-            }
-            if importedTracks[0].duration == nil {
-                importedTracks[0].duration = result.duration
-            }
+        guard let track = onlineTrack(from: fileURL, fallback: result) else {
+            statusMessage = "Downloaded but could not import: unsupported file type."
+            return nil
         }
 
-        library.upsertTracks(importedTracks)
-        schedulePostImportLibraryMaintenance()
+        library.upsertTracks([track])
+        scheduleOnlineArtworkFinalization(for: track.id, source: result)
+        schedulePostImportLibraryMaintenance(analyze: false)
+        statusMessage = "Downloaded \(track.title)."
+        return track
+    }
 
-        if let track = importedTracks.first {
-            statusMessage = "Downloaded \(track.title)."
-            return track
-        } else if let failure = importResult.failures.first {
-            statusMessage = "Downloaded but could not import: \(failure.errorDescription)"
+    private func scheduleOnlineArtworkFinalization(for trackID: Track.ID, source result: OnlineSearchResult) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            if await self.applyOnlineArtworkIfAvailable(for: trackID, source: result) {
+                return
+            }
+
+            let retryDelays: [UInt64] = [500_000_000, 1_500_000_000, 3_000_000_000]
+            for delay in retryDelays {
+                try? await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled else { return }
+
+                if await self.applyOnlineArtworkIfAvailable(for: trackID, source: result) {
+                    return
+                }
+            }
+        }
+    }
+
+    private func applyOnlineArtworkIfAvailable(for trackID: Track.ID, source result: OnlineSearchResult) async -> Bool {
+        guard let artworkURL = try? await onlineSearchService.ensureThumbnail(for: result) else {
+            return false
         }
 
+        guard let index = library.tracks.firstIndex(where: { $0.id == trackID }) else {
+            return true
+        }
+
+        let standardizedArtworkPath = artworkURL.standardizedFileURL.path
+        if library.tracks[index].artworkURL?.standardizedFileURL.path == standardizedArtworkPath {
+            return true
+        }
+
+        var updatedTrack = library.tracks[index]
+        updatedTrack.artworkURL = artworkURL
+        updatedTrack.artworkBookmarkData = try? artworkURL.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+        updatedTrack.artworkCacheKey = "\(OnlineTrackStore.hashKey(for: result.sourceURL))-online-artwork"
+
+        var updatedLibrary = library
+        updatedLibrary.tracks[index] = updatedTrack
+        library = updatedLibrary
+        await persistLibrary()
+        return true
+    }
+
+    private func onlineTrack(from fileURL: URL, fallback result: OnlineSearchResult) -> Track? {
+        guard let fileType = AudioFileType(fileExtension: fileURL.pathExtension) else {
+            return nil
+        }
+
+        let title = result.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artworkURL = onlineSidecarArtworkURL(for: fileURL)
+        let artworkBookmarkData = artworkURL.flatMap {
+            try? $0.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
+        let artworkCacheKey = artworkURL == nil ? nil : "\(OnlineTrackStore.hashKey(for: result.sourceURL))-online-artwork"
+
+        return Track(
+            fileURL: fileURL,
+            bookmarkData: try? fileURL.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil),
+            title: title.isEmpty ? fileURL.deletingPathExtension().lastPathComponent : title,
+            artist: result.artist,
+            album: "Online Downloads",
+            duration: result.duration,
+            artworkCacheKey: artworkCacheKey,
+            artworkURL: artworkURL,
+            artworkBookmarkData: artworkBookmarkData,
+            fileType: fileType,
+            playbackNormalizationGain: 1.0,
+            playbackEndTime: nil,
+            playbackAnalysisVersion: PlaybackAnalysis.currentVersion,
+            availability: FileManager.default.fileExists(atPath: fileURL.path) ? .available : .missing
+        )
+    }
+
+    private func onlineSidecarArtworkURL(for fileURL: URL) -> URL? {
+        let directory = fileURL.deletingLastPathComponent()
+        for fileExtension in ["jpg", "jpeg", "png", "webp", "tif", "tiff"] {
+            let candidate = directory.appendingPathComponent("cover").appendingPathExtension(fileExtension)
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
         return nil
     }
 
@@ -479,12 +726,127 @@ final class NightwingAppModel: ObservableObject {
         }
     }
 
-    private func schedulePostImportLibraryMaintenance() {
+    private func schedulePostImportLibraryMaintenance(analyze: Bool = true) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.persistLibrary()
-            self.startPlaybackAnalysis()
+            if analyze {
+                self.startPlaybackAnalysis()
+            }
         }
+    }
+    #endif
+
+    #if os(iOS)
+    func importSystemMusicLibrary() {
+        Task {
+            await importSystemMusicLibraryIfPossible(requestAuthorization: true, showStatus: true)
+        }
+    }
+
+    private func importSystemMusicLibraryIfPossible(requestAuthorization: Bool, showStatus: Bool) async {
+        guard !isSyncingSystemMusicLibrary else { return }
+
+        let status = await systemMusicLibraryAuthorizationStatus(requestAuthorization: requestAuthorization)
+        guard status == .authorized else {
+            if showStatus {
+                switch status {
+                case .denied, .restricted:
+                    statusMessage = "Music Library access is off. Enable it in Settings to import iPhone songs."
+                case .notDetermined:
+                    statusMessage = "Music Library access was not granted."
+                default:
+                    statusMessage = "Could not access the iPhone Music library."
+                }
+            }
+            return
+        }
+
+        startWatchingSystemMusicLibrary()
+        isSyncingSystemMusicLibrary = true
+        isImporting = true
+        defer {
+            isSyncingSystemMusicLibrary = false
+            isImporting = false
+        }
+
+        let items = MPMediaQuery.songs().items ?? []
+        let tracks = items.compactMap(systemMusicTrack)
+        guard !tracks.isEmpty else {
+            if showStatus {
+                statusMessage = "No locally playable iPhone Music songs were found."
+            }
+            return
+        }
+
+        let previousCount = library.tracks.count
+        library.upsertTracks(tracks)
+        let importedCount = max(library.tracks.count - previousCount, 0)
+        await persistLibrary()
+        startPlaybackAnalysis()
+
+        if showStatus {
+            if importedCount > 0 {
+                statusMessage = "Imported \(importedCount) iPhone Music track\(importedCount == 1 ? "" : "s")."
+            } else {
+                statusMessage = "iPhone Music library is up to date."
+            }
+        }
+    }
+
+    private func systemMusicLibraryAuthorizationStatus(requestAuthorization: Bool) async -> MPMediaLibraryAuthorizationStatus {
+        let currentStatus = MPMediaLibrary.authorizationStatus()
+        guard currentStatus == .notDetermined, requestAuthorization else {
+            return currentStatus
+        }
+
+        return await withCheckedContinuation { continuation in
+            MPMediaLibrary.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
+        }
+    }
+
+    private func startWatchingSystemMusicLibrary() {
+        guard musicLibraryChangeObserver == nil else { return }
+
+        MPMediaLibrary.default().beginGeneratingLibraryChangeNotifications()
+        musicLibraryChangeObserver = NotificationCenter.default.addObserver(
+            forName: .MPMediaLibraryDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.importSystemMusicLibraryIfPossible(requestAuthorization: false, showStatus: false)
+            }
+        }
+    }
+
+    private func systemMusicTrack(from item: MPMediaItem) -> Track? {
+        guard let assetURL = item.assetURL else { return nil }
+
+        let title = item.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = item.artist?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let album = item.albumTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let albumArtist = item.albumArtist?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let genre = item.genre?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fileType = AudioFileType(fileExtension: assetURL.pathExtension) ?? .m4a
+
+        return Track(
+            fileURL: assetURL,
+            title: title?.isEmpty == false ? title! : "Untitled Song",
+            artist: artist?.isEmpty == false ? artist : nil,
+            album: album?.isEmpty == false ? album : "iPhone Music",
+            albumArtist: albumArtist?.isEmpty == false ? albumArtist : nil,
+            genre: genre?.isEmpty == false ? genre : nil,
+            trackNumber: item.albumTrackNumber > 0 ? item.albumTrackNumber : nil,
+            discNumber: item.discNumber > 0 ? item.discNumber : nil,
+            duration: item.playbackDuration > 0 ? item.playbackDuration : nil,
+            artworkCacheKey: item.artwork == nil ? nil : "media-library-\(item.persistentID)-artwork",
+            fileType: fileType,
+            dateAdded: item.dateAdded,
+            availability: .available
+        )
     }
     #endif
 
@@ -501,23 +863,33 @@ final class NightwingAppModel: ObservableObject {
     }
 
     func playlistTrackEntries(for playlist: Playlist) -> [PlaylistTrackEntry] {
-        playlist.items.compactMap { item in
-            guard let track = library.tracks.first(where: { $0.id == item.trackID }) else { return nil }
+        rebuildLibraryCacheIfNeeded()
+        return playlist.items.compactMap { item -> PlaylistTrackEntry? in
+            guard let track = tracksByID[item.trackID] else { return nil }
             return PlaylistTrackEntry(item: item, track: track)
         }
     }
 
     func track(for item: PlaybackQueueItem?) -> Track? {
         guard let item else { return nil }
-        let itemPath = item.url.standardizedFileURL.path
-        return library.tracks.first { track in
-            track.fileURL.standardizedFileURL.path == itemPath
+        rebuildLibraryCacheIfNeeded()
+
+        if let trackID = item.trackID,
+           let track = tracksByID[trackID] {
+            return track
         }
+
+        return tracksByStandardizedPath[item.url.standardizedFileURL.path]
+    }
+
+    func track(id: Track.ID) -> Track? {
+        rebuildLibraryCacheIfNeeded()
+        return tracksByID[id]
     }
 
     func currentDisplayTrack() -> Track? {
         if let optimisticPlaybackTrackID,
-           let track = library.tracks.first(where: { $0.id == optimisticPlaybackTrackID }) {
+           let track = track(id: optimisticPlaybackTrackID) {
             return track
         }
 
@@ -542,6 +914,11 @@ final class NightwingAppModel: ObservableObject {
             var loadedLibrary = try await store.load()
             loadedLibrary.markMissingTracks()
             library = loadedLibrary
+            lastSavedPlaybackResumeSnapshot = PlaybackResumeSnapshot(
+                queue: loadedLibrary.queue,
+                resumeState: loadedLibrary.playbackResumeState
+            )
+            restorePlaybackIfNeeded(from: loadedLibrary)
             startPlaybackAnalysis()
         } catch {
             statusMessage = "Could not load library: \(error.localizedDescription)"
@@ -702,6 +1079,7 @@ final class NightwingAppModel: ObservableObject {
             do {
                 let items = tracks.map {
                     PlaybackQueueItem(
+                        trackID: $0.id,
                         url: playbackURL(for: $0),
                         title: $0.title,
                         normalizationGain: $0.playbackNormalizationGain,
@@ -791,7 +1169,7 @@ final class NightwingAppModel: ObservableObject {
     }
 
     func movePlaylistItem(id itemID: PlaylistItem.ID, in playlist: Playlist, to index: Int) {
-        library.movePlaylistItem(id: itemID, inPlaylist: playlist.id, to: index)
+        guard library.movePlaylistItem(id: itemID, inPlaylist: playlist.id, to: index) else { return }
         Task {
             await persistLibrary()
         }
@@ -800,6 +1178,7 @@ final class NightwingAppModel: ObservableObject {
     func enqueue(_ track: Track) {
         player.enqueue(
             url: playbackURL(for: track),
+            trackID: track.id,
             title: track.title,
             normalizationGain: track.playbackNormalizationGain,
             playbackEndTime: track.playbackEndTime,
@@ -811,6 +1190,7 @@ final class NightwingAppModel: ObservableObject {
     func playNext(_ track: Track) {
         player.playNext(
             url: playbackURL(for: track),
+            trackID: track.id,
             title: track.title,
             normalizationGain: track.playbackNormalizationGain,
             playbackEndTime: track.playbackEndTime,
@@ -836,6 +1216,114 @@ final class NightwingAppModel: ObservableObject {
             try player.seek(to: time)
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    private func observePlaybackState() {
+        playbackStateCancellable = player.$state.sink { [weak self] state in
+            Task { @MainActor [weak self] in
+                self?.playbackStateDidChange(state)
+            }
+        }
+    }
+
+    private func restorePlaybackIfNeeded(from loadedLibrary: LocalLibrary) {
+        guard let resumeState = loadedLibrary.playbackResumeState,
+              !loadedLibrary.queue.isEmpty,
+              loadedLibrary.queue.currentItem != nil else { return }
+
+        isRestoringPlayback = true
+        defer { isRestoringPlayback = false }
+
+        do {
+            try player.restoreQueue(
+                loadedLibrary.queue,
+                currentTime: resumeState.currentTime,
+                profile: resumeState.profile,
+                repeatMode: resumeState.repeatMode,
+                autoplay: resumeState.wasPlaying
+            )
+        } catch {
+            statusMessage = "Could not restore playback: \(error.localizedDescription)"
+        }
+    }
+
+    private func playbackStateDidChange(_ state: PlaybackState) {
+        guard !isRestoringPlayback else { return }
+
+        let snapshot = playbackResumeSnapshot(from: state)
+        guard shouldSavePlaybackResumeSnapshot(snapshot) else { return }
+
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastPlaybackResumeSaveDate)
+        if hasImmediatePlaybackResumeChange(snapshot) ||
+            elapsed >= Self.playbackResumeSaveInterval ||
+            !state.isPlaying ||
+            snapshot.resumeState == nil {
+            persistPlaybackResumeSnapshot(snapshot)
+            return
+        }
+
+        guard playbackResumeSaveTask == nil else { return }
+        let delay = max(Self.playbackResumeSaveInterval - elapsed, 0.5)
+        playbackResumeSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.playbackResumeSaveTask = nil
+            self.persistPlaybackResumeSnapshot(self.playbackResumeSnapshot(from: self.player.state))
+        }
+    }
+
+    private func playbackResumeSnapshot(from state: PlaybackState) -> PlaybackResumeSnapshot {
+        let currentTime = state.currentTime.isFinite ? max(state.currentTime, 0) : 0
+        let resumeState: PlaybackResumeState?
+        if state.queue.currentItem == nil || state.queue.isEmpty {
+            resumeState = nil
+        } else {
+            resumeState = PlaybackResumeState(
+                currentTime: currentTime,
+                wasPlaying: state.isPlaying,
+                repeatMode: state.repeatMode,
+                profile: state.profile
+            )
+        }
+
+        return PlaybackResumeSnapshot(queue: state.queue, resumeState: resumeState)
+    }
+
+    private func shouldSavePlaybackResumeSnapshot(_ snapshot: PlaybackResumeSnapshot) -> Bool {
+        guard let lastSavedPlaybackResumeSnapshot else { return true }
+        guard snapshot.queue == lastSavedPlaybackResumeSnapshot.queue else { return true }
+        guard snapshot.resumeState?.wasPlaying == lastSavedPlaybackResumeSnapshot.resumeState?.wasPlaying,
+              snapshot.resumeState?.repeatMode == lastSavedPlaybackResumeSnapshot.resumeState?.repeatMode,
+              snapshot.resumeState?.profile == lastSavedPlaybackResumeSnapshot.resumeState?.profile else {
+            return true
+        }
+
+        let savedTime = lastSavedPlaybackResumeSnapshot.resumeState?.currentTime ?? 0
+        let currentTime = snapshot.resumeState?.currentTime ?? 0
+        return abs(savedTime - currentTime) >= Self.playbackResumeSaveInterval
+    }
+
+    private func hasImmediatePlaybackResumeChange(_ snapshot: PlaybackResumeSnapshot) -> Bool {
+        guard let lastSavedPlaybackResumeSnapshot else { return true }
+        guard snapshot.queue == lastSavedPlaybackResumeSnapshot.queue else { return true }
+        return snapshot.resumeState?.wasPlaying != lastSavedPlaybackResumeSnapshot.resumeState?.wasPlaying ||
+            snapshot.resumeState?.repeatMode != lastSavedPlaybackResumeSnapshot.resumeState?.repeatMode ||
+            snapshot.resumeState?.profile != lastSavedPlaybackResumeSnapshot.resumeState?.profile
+    }
+
+    private func persistPlaybackResumeSnapshot(_ snapshot: PlaybackResumeSnapshot) {
+        playbackResumeSaveTask?.cancel()
+        playbackResumeSaveTask = nil
+
+        library.queue = snapshot.queue
+        library.playbackResumeState = snapshot.resumeState
+        lastSavedPlaybackResumeSnapshot = snapshot
+        lastPlaybackResumeSaveDate = Date()
+
+        Task {
+            await persistLibrary()
         }
     }
 
@@ -991,6 +1479,18 @@ final class NightwingAppModel: ObservableObject {
         return folderName.isEmpty ? "Unknown Album" : folderName
     }
 
+    private static func isOnlineDownloadedTrack(_ track: Track) -> Bool {
+        track.fileURL.standardizedFileURL.path.contains("/Nightwing/Online Downloads/")
+    }
+
+    private static func isOnlineSingleDownloadTrack(_ track: Track) -> Bool {
+        track.fileURL.standardizedFileURL.path.contains("/Nightwing/Online Downloads/Tracks/")
+    }
+
+    private static func isOnlineAlbumDownloadTrack(_ track: Track) -> Bool {
+        track.fileURL.standardizedFileURL.path.contains("/Nightwing/Online Downloads/Albums/")
+    }
+
     private static func albumTrackSort(_ lhs: Track, _ rhs: Track) -> Bool {
         let lhsDisc = lhs.discNumber ?? 0
         let rhsDisc = rhs.discNumber ?? 0
@@ -1016,7 +1516,82 @@ final class NightwingAppModel: ObservableObject {
             statusMessage = "Could not save library: \(error.localizedDescription)"
         }
     }
+
+    private func rebuildLibraryCacheIfNeeded() {
+        guard needsLibraryCacheRebuild else { return }
+
+        var pathLookup: [String: Track] = [:]
+        var idLookup: [Track.ID: Track] = [:]
+        pathLookup.reserveCapacity(library.tracks.count)
+        idLookup.reserveCapacity(library.tracks.count)
+
+        for track in library.tracks {
+            idLookup[track.id] = track
+
+            let path = track.fileURL.standardizedFileURL.path
+            if pathLookup[path] == nil {
+                pathLookup[path] = track
+            }
+        }
+
+        tracksByID = idLookup
+        tracksByStandardizedPath = pathLookup
+        sortedTracksCache = library.tracks.sorted {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+        albumGroupsCache = Dictionary(grouping: library.tracks.filter { !Self.isOnlineSingleDownloadTrack($0) }, by: Self.albumKey(for:))
+            .map { key, tracks in
+                let sortedAlbumTracks = tracks.sorted(by: Self.albumTrackSort)
+                return LibraryAlbumGroup(
+                    id: key,
+                    title: sortedAlbumTracks.first.map(Self.albumTitle(for:)) ?? "Unknown Album",
+                    tracks: sortedAlbumTracks
+                )
+            }
+            .sorted {
+                let artistComparison = $0.artistSummary.localizedCaseInsensitiveCompare($1.artistSummary)
+                if artistComparison != .orderedSame {
+                    return artistComparison == .orderedAscending
+                }
+
+                if let lhsYear = $0.releaseYear, let rhsYear = $1.releaseYear, lhsYear != rhsYear {
+                    return lhsYear < rhsYear
+                }
+
+                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+        recentlyAddedTracksCache = Array(library.tracks.sorted { $0.dateAdded > $1.dateAdded }.prefix(12))
+        onlineDownloadedTracksCache = library.tracks
+            .filter(Self.isOnlineSingleDownloadTrack)
+            .sorted { $0.dateAdded > $1.dateAdded }
+        needsLibraryCacheRebuild = false
+    }
 }
+
+#if os(macOS)
+private extension OnlineSearchResult.DownloadState {
+    var isIdle: Bool {
+        if case .idle = self {
+            return true
+        }
+        return false
+    }
+
+    var isDownloading: Bool {
+        if case .downloading = self {
+            return true
+        }
+        return false
+    }
+
+    var completedFileURL: URL? {
+        if case let .completed(fileURL) = self {
+            return fileURL
+        }
+        return nil
+    }
+}
+#endif
 
 func formattedDuration(_ duration: TimeInterval?) -> String {
     guard let duration, duration.isFinite, duration > 0 else {
@@ -1036,26 +1611,26 @@ func formattedSpeedAdjustedDuration(_ duration: TimeInterval?, playbackRate: Dou
 }
 
 enum NightwingTheme {
-    static let background = Color(red: 18 / 255, green: 18 / 255, blue: 18 / 255)
-    static let sidebar = Color.black
-    static let panel = Color(red: 24 / 255, green: 24 / 255, blue: 24 / 255)
-    static let panelElevated = Color(red: 34 / 255, green: 34 / 255, blue: 34 / 255)
-    static let rowHover = Color.white.opacity(0.08)
-    static let divider = Color.white.opacity(0.10)
-    static let glassTint = Color.white.opacity(0.075)
-    static let glassElevatedTint = Color.white.opacity(0.13)
-    static let glassPressedTint = Color.white.opacity(0.18)
-    static let glassStroke = Color.white.opacity(0.18)
-    static let glassInnerStroke = Color.white.opacity(0.07)
+    static let background = Color(red: 10 / 255, green: 18 / 255, blue: 33 / 255)
+    static let sidebar = Color(red: 8 / 255, green: 14 / 255, blue: 26 / 255)
+    static let panel = Color(red: 17 / 255, green: 28 / 255, blue: 47 / 255)
+    static let panelElevated = Color(red: 26 / 255, green: 42 / 255, blue: 68 / 255)
+    static let action = Color(red: 31 / 255, green: 214 / 255, blue: 255 / 255)
+    static let rowHover = Color(red: 31 / 255, green: 98 / 255, blue: 145 / 255).opacity(0.30)
+    static let divider = Color(red: 120 / 255, green: 198 / 255, blue: 255 / 255).opacity(0.20)
+    static let glassTint = Color(red: 31 / 255, green: 214 / 255, blue: 255 / 255).opacity(0.06)
+    static let glassElevatedTint = Color(red: 31 / 255, green: 214 / 255, blue: 255 / 255).opacity(0.11)
+    static let glassPressedTint = Color(red: 31 / 255, green: 214 / 255, blue: 255 / 255).opacity(0.17)
+    static let glassStroke = Color(red: 113 / 255, green: 220 / 255, blue: 255 / 255).opacity(0.28)
+    static let glassInnerStroke = Color.white.opacity(0.08)
     static let primaryText = Color.white
-    static let secondaryText = Color(red: 179 / 255, green: 179 / 255, blue: 179 / 255)
-    static let action = Color(red: 30 / 255, green: 215 / 255, blue: 96 / 255)
-    static let warning = Color(red: 255 / 255, green: 179 / 255, blue: 64 / 255)
+    static let secondaryText = Color(red: 190 / 255, green: 207 / 255, blue: 221 / 255)
+    static let warning = Color(red: 255 / 255, green: 170 / 255, blue: 56 / 255)
 
     static var appBackground: some View {
         LinearGradient(
             colors: [
-                Color(red: 33 / 255, green: 33 / 255, blue: 33 / 255),
+                Color(red: 15 / 255, green: 35 / 255, blue: 62 / 255),
                 background
             ],
             startPoint: .top,
@@ -1086,6 +1661,12 @@ struct LibraryAlbumGroup: Identifiable, Hashable {
     let id: String
     let title: String
     let tracks: [Track]
+
+    var isOnlineDownloadedAlbum: Bool {
+        tracks.contains { track in
+            track.fileURL.standardizedFileURL.path.contains("/Nightwing/Online Downloads/Albums/")
+        }
+    }
 
     var releaseYear: Int? {
         tracks.compactMap(\.releaseYear).min()
@@ -1714,6 +2295,11 @@ struct MiniPlayerBar: View {
 
     private var transportButtons: some View {
         HStack(spacing: 18) {
+            PlaybackSpeedMenu()
+                .hidden()
+                .accessibilityHidden(true)
+                .allowsHitTesting(false)
+
             ShuffleButton()
 
             Button {
@@ -1747,8 +2333,11 @@ struct MiniPlayerBar: View {
             .foregroundStyle(NightwingTheme.secondaryText)
             .accessibilityLabel("Next")
 
+            RepeatButton()
+
             PlaybackSpeedMenu()
         }
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private var progressRow: some View {
@@ -1784,8 +2373,6 @@ struct MiniPlayerBar: View {
             Spacer(minLength: 10)
 
             HStack(spacing: 12) {
-                RepeatButton()
-
                 if let showsQueue {
                     QueueToggleButton(showsQueue: showsQueue)
                 }
@@ -1807,84 +2394,96 @@ struct MiniPlayerBar: View {
 #endif
 
     private var mobileBar: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 12) {
-                trackSummary
+        VStack(spacing: 0) {
+            HStack(spacing: 11) {
+                NightwingArtworkView(track: currentDisplayTrack, size: 42, cornerRadius: 5)
 
-                Spacer(minLength: 8)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(currentTitle)
+                        .font(.callout.weight(.bold))
+                        .foregroundStyle(NightwingTheme.primaryText)
+                        .lineLimit(1)
 
-                ShuffleButton(isCompact: true)
-                RepeatButton(isCompact: true)
+                    Text(currentSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(NightwingTheme.secondaryText)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
                     appModel.togglePlayback()
                 } label: {
                     Image(systemName: showsPauseState ? "pause.fill" : "play.fill")
-                        .frame(width: 30, height: 30)
+                        .font(.system(size: 18, weight: .black))
+                        .foregroundStyle(NightwingTheme.primaryText)
+                        .frame(width: 34, height: 34)
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(NightwingTheme.primaryText)
+                .buttonStyle(.plain)
                 .accessibilityLabel(showsPauseState ? "Pause" : "Play")
 
                 Button {
                     try? player.next()
                 } label: {
                     Image(systemName: "forward.fill")
-                        .frame(width: 30, height: 30)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(NightwingTheme.primaryText)
+                        .frame(width: 32, height: 34)
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(NightwingTheme.primaryText)
+                .buttonStyle(.plain)
                 .accessibilityLabel("Next")
-
-                PlaybackSpeedMenu(isCompact: true)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
 
-            Slider(value: progressBinding, in: 0...max(player.state.duration, 1))
-                .disabled(player.state.currentItem == nil)
-                .accessibilityLabel("Playback position")
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.22))
+                    Capsule()
+                        .fill(Color.white.opacity(0.86))
+                        .frame(width: proxy.size.width * mobileProgressFraction)
+                }
+            }
+            .frame(height: 2)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 4)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Playback progress")
+            .accessibilityValue("\(Int(mobileProgressFraction * 100)) percent")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(NightwingTheme.sidebar)
+        .background(NightwingTheme.panel)
+    }
+
+    private var mobileProgressFraction: CGFloat {
+        guard player.state.duration > 0 else { return 0 }
+        return CGFloat(min(max(player.state.currentTime / player.state.duration, 0), 1))
     }
 }
 
 struct PlaybackSpeedMenu: View {
     @EnvironmentObject private var player: PlayerEngine
+    @State private var isPickerPresented = false
 
     var isCompact = false
 
     var body: some View {
-        Menu {
-            Section("Playback Speed") {
-                ForEach(PlaybackProfile.speedPresets) { preset in
-                    Button {
-                        player.setSpeedPreset(preset)
-                    } label: {
-                        if isSelected(preset) {
-                            Label(menuTitle(for: preset), systemImage: "checkmark")
-                        } else {
-                            Text(menuTitle(for: preset))
-                        }
-                    }
-                }
-            }
-
-            Text("Presets use whole semitone shifts so pitch stays cleaner than arbitrary speeds.")
+        Button {
+            isPickerPresented.toggle()
         } label: {
             HStack(spacing: 4) {
-                Text(PlaybackProfile.speedLabel(for: player.state.profile.clampedSpeed))
-                    .font(.caption.weight(.bold).monospacedDigit())
-                    .lineLimit(1)
+                PlaybackSpeedFormulaView(speed: player.state.profile.clampedSpeed, size: isCompact ? 12 : 13, weight: .bold)
+                    .fixedSize()
 
                 if !isCompact {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .bold))
+                        .frame(width: 10)
                 }
             }
             .foregroundStyle(NightwingTheme.primaryText)
             .padding(.horizontal, isCompact ? 8 : 10)
-            .frame(height: isCompact ? 28 : 30)
+            .frame(minHeight: isCompact ? 28 : 30)
             .background(.ultraThinMaterial, in: Capsule())
             .background(NightwingTheme.glassElevatedTint, in: Capsule())
             .overlay {
@@ -1895,18 +2494,246 @@ struct PlaybackSpeedMenu: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Playback speed")
         .accessibilityValue(PlaybackProfile.speedLabel(for: player.state.profile.clampedSpeed))
+        .popover(isPresented: $isPickerPresented, arrowEdge: .bottom) {
+            PlaybackSpeedPickerPopover {
+                isPickerPresented = false
+            }
+            .environmentObject(player)
+        }
+    }
+}
+
+private struct PlaybackSpeedPickerPopover: View {
+    @EnvironmentObject private var player: PlayerEngine
+
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Playback Speed")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(NightwingTheme.secondaryText)
+
+            VStack(spacing: 2) {
+                ForEach(PlaybackProfile.speedPresets) { preset in
+                    Button {
+                        player.setSpeedPreset(preset)
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(isSelected(preset) ? NightwingTheme.action : Color.clear)
+                                .frame(width: 16)
+
+                            PlaybackSpeedFormulaView(semitoneOffset: preset.semitoneOffset, size: 15, weight: .semibold)
+                                .frame(width: 66, alignment: .leading)
+
+                            Text(presetSubtitle(for: preset))
+                                .font(.callout)
+                                .foregroundStyle(NightwingTheme.primaryText)
+                                .lineLimit(1)
+
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .background(isSelected(preset) ? NightwingTheme.action.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(accessibilityLabel(for: preset))
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 240)
     }
 
     private func isSelected(_ preset: PlaybackSpeedPreset) -> Bool {
         abs(player.state.profile.clampedSpeed - preset.speed) <= 0.006
     }
 
-    private func menuTitle(for preset: PlaybackSpeedPreset) -> String {
+    private func isDefaultPreset(_ preset: PlaybackSpeedPreset) -> Bool {
+        preset.semitoneOffset == Int(PlaybackProfile.nightcorePitchSemitones)
+    }
+
+    private func presetSubtitle(for preset: PlaybackSpeedPreset) -> String {
         if preset.semitoneOffset == 0 {
-            return "\(preset.title) - \(preset.subtitle)"
+            return "Original"
         }
 
-        return "\(preset.title) - \(preset.subtitle)"
+        return "\(preset.title) st\(isDefaultPreset(preset) ? " - Default" : "")"
+    }
+
+    private func accessibilityLabel(for preset: PlaybackSpeedPreset) -> String {
+        if preset.semitoneOffset == 0 {
+            return "1 times, original"
+        }
+
+        return "\(PlaybackProfile.speedLabel(for: preset.speed)), \(preset.title) semitones\(isDefaultPreset(preset) ? ", default" : "")"
+    }
+}
+
+private struct PlaybackSpeedFormulaView: View {
+    private let formula: PlaybackSpeedFormula
+    private let size: CGFloat
+    private let weight: Font.Weight
+
+    init(speed: Double, size: CGFloat = 13, weight: Font.Weight = .semibold) {
+        formula = PlaybackSpeedFormula(speed: speed)
+        self.size = size
+        self.weight = weight
+    }
+
+    init(semitoneOffset: Int, size: CGFloat = 13, weight: Font.Weight = .semibold) {
+        formula = PlaybackSpeedFormula(semitoneOffset: semitoneOffset)
+        self.size = size
+        self.weight = weight
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 1.5) {
+            if formula.isApproximate {
+                Text("≈")
+                    .font(.system(size: size, weight: weight))
+            }
+
+            formulaBody
+
+            Text("x")
+                .font(.system(size: size, weight: weight))
+        }
+        .accessibilityLabel(formula.accessibilityLabel)
+    }
+
+    @ViewBuilder
+    private var formulaBody: some View {
+        switch formula.kind {
+        case .one:
+            Text("1")
+                .font(.system(size: size, weight: weight))
+        case .squareRootTwo:
+            Text("√2")
+                .font(.system(size: size, weight: weight))
+        case .whole(let value):
+            Text("\(value)")
+                .font(.system(size: size, weight: weight))
+        case .power(let numerator, let denominator):
+            HStack(alignment: .top, spacing: 1) {
+                Text("2")
+                    .font(.system(size: size, weight: weight))
+
+                if denominator == 1 {
+                    Text("\(numerator)")
+                        .font(.system(size: size * 0.62, weight: weight))
+                        .baselineOffset(size * 0.36)
+                } else {
+                    VStack(spacing: 0) {
+                        Text("\(numerator)")
+                            .font(.system(size: size * 0.52, weight: weight))
+                        Rectangle()
+                            .frame(width: fractionRuleWidth(numerator: numerator, denominator: denominator), height: 0.8)
+                        Text("\(denominator)")
+                            .font(.system(size: size * 0.52, weight: weight))
+                    }
+                    .offset(y: -size * 0.34)
+                }
+            }
+        }
+    }
+
+    private func fractionRuleWidth(numerator: Int, denominator: Int) -> CGFloat {
+        CGFloat(max(String(numerator).count, String(denominator).count)) * size * 0.32 + 4
+    }
+}
+
+private struct PlaybackSpeedFormula {
+    enum Kind {
+        case one
+        case whole(Int)
+        case squareRootTwo
+        case power(numerator: Int, denominator: Int)
+    }
+
+    let kind: Kind
+    let isApproximate: Bool
+
+    init(speed: Double) {
+        let clampedSpeed = min(max(speed, 0.25), 4.0)
+
+        if let preset = PlaybackProfile.speedPreset(matching: clampedSpeed) {
+            self.init(semitoneOffset: preset.semitoneOffset, isApproximate: false)
+            return
+        }
+
+        let roundedWholeSpeed = clampedSpeed.rounded()
+        if abs(clampedSpeed - roundedWholeSpeed) <= 0.006 {
+            self.init(kind: .whole(Int(roundedWholeSpeed)), isApproximate: false)
+            return
+        }
+
+        let roundedCents = Int((1200.0 * log2(clampedSpeed)).rounded())
+        self.init(numerator: roundedCents, denominator: 1200, isApproximate: true)
+    }
+
+    init(semitoneOffset: Int, isApproximate: Bool = false) {
+        self.init(numerator: semitoneOffset, denominator: 12, isApproximate: isApproximate)
+    }
+
+    private init(kind: Kind, isApproximate: Bool) {
+        self.kind = kind
+        self.isApproximate = isApproximate
+    }
+
+    private init(numerator: Int, denominator: Int, isApproximate: Bool) {
+        let divisor = Self.greatestCommonDivisor(abs(numerator), abs(denominator))
+        let simplifiedNumerator = numerator / divisor
+        let simplifiedDenominator = denominator / divisor
+
+        self.isApproximate = isApproximate
+
+        if simplifiedNumerator == 0 {
+            kind = .one
+        } else if simplifiedNumerator == simplifiedDenominator {
+            kind = .whole(2)
+        } else if simplifiedNumerator == 1 && simplifiedDenominator == 2 {
+            kind = .squareRootTwo
+        } else {
+            kind = .power(numerator: simplifiedNumerator, denominator: simplifiedDenominator)
+        }
+    }
+
+    var accessibilityLabel: String {
+        let prefix = isApproximate ? "approximately " : ""
+
+        switch kind {
+        case .one:
+            return "\(prefix)1 times"
+        case .whole(let value):
+            return "\(prefix)\(value) times"
+        case .squareRootTwo:
+            return "\(prefix)root 2 times"
+        case .power(let numerator, let denominator):
+            if denominator == 1 {
+                return "\(prefix)2 to the \(numerator) times"
+            }
+
+            return "\(prefix)2 to the \(numerator) over \(denominator) times"
+        }
+    }
+
+    private static func greatestCommonDivisor(_ lhs: Int, _ rhs: Int) -> Int {
+        var a = lhs
+        var b = rhs
+
+        while b != 0 {
+            let remainder = a % b
+            a = b
+            b = remainder
+        }
+
+        return max(a, 1)
     }
 }
 
@@ -2111,6 +2938,11 @@ struct TransportControlsView: View {
             .foregroundStyle(.secondary)
 
             HStack(spacing: 28) {
+                PlaybackSpeedMenu()
+                    .hidden()
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
+
                 ShuffleButton()
 
                 Button {
@@ -2138,8 +2970,11 @@ struct TransportControlsView: View {
                 }
                 .accessibilityLabel("Next")
 
+                RepeatButton()
+
                 PlaybackSpeedMenu()
             }
+            .frame(maxWidth: .infinity, alignment: .center)
             .buttonStyle(.plain)
 
             VolumeControlView()
@@ -2150,6 +2985,11 @@ struct TransportControlsView: View {
 
 struct NightcoreControlPanel: View {
     @EnvironmentObject private var player: PlayerEngine
+    @State private var isExpanded: Bool
+
+    init(initiallyExpanded: Bool = true) {
+        _isExpanded = State(initialValue: initiallyExpanded)
+    }
 
     private var nightcoreEnabled: Binding<Bool> {
         Binding {
@@ -2193,46 +3033,146 @@ struct NightcoreControlPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Label("Nightcore", systemImage: "sparkles")
-                    .font(.headline)
-                Spacer()
-                Toggle("Nightcore", isOn: nightcoreEnabled)
-                    .labelsHidden()
-            }
-
-            Picker("Speed", selection: speed) {
-                ForEach(PlaybackProfile.speedPresets) { preset in
-                    Text(preset.title).tag(preset.speed)
+            Button {
+                withAnimation(.snappy(duration: 0.22)) {
+                    isExpanded.toggle()
                 }
-            }
-            .pickerStyle(.segmented)
+            } label: {
+                HStack(spacing: 12) {
+                    Label("Nightcore", systemImage: "sparkles")
+                        .font(.headline)
 
-            LabeledContent("Custom speed") {
-                Text("\(player.state.profile.clampedSpeed, specifier: "%.3f")x")
-                    .monospacedDigit()
+                    Spacer(minLength: 8)
+
+                    if player.state.profile.isNightcoreEnabled {
+                        HStack(spacing: 4) {
+                            Text("Speeding up by")
+                                .font(.callout.weight(.semibold))
+                            PlaybackSpeedFormulaView(speed: player.state.profile.clampedSpeed, size: 14, weight: .semibold)
+                        }
+                        .foregroundStyle(NightwingTheme.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                    } else {
+                        Text("Original speed")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(NightwingTheme.secondaryText)
+                            .lineLimit(1)
+                    }
+
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(NightwingTheme.secondaryText)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "Collapse Nightcore controls" : "Expand Nightcore controls")
+
+            if isExpanded {
+                HStack {
+                    Text("Enabled")
+                        .font(.callout)
+                    Spacer()
+                    Toggle("Nightcore", isOn: nightcoreEnabled)
+                        .labelsHidden()
+                }
+
+                NightcoreSpeedPresetGrid()
+
+                LabeledContent("Custom speed") {
+                    PlaybackSpeedFormulaView(speed: player.state.profile.clampedSpeed, size: 14, weight: .semibold)
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: speed, in: 0.5...2.0)
+                    .accessibilityLabel("Custom speed")
+
+                LabeledContent("Pitch offset") {
+                    Text("\(player.state.profile.pitchSemitones, specifier: "%+.1f") st")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: pitchOffset, in: -12...12)
+                    .accessibilityLabel("Pitch offset")
+
+                Toggle("Link pitch to speed", isOn: pitchLinked)
+                Toggle("Preserve pitch", isOn: pitchPreserved)
+
+                Text("Effective pitch: \(player.state.profile.effectivePitchSemitones, specifier: "%+.1f") semitones")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Slider(value: speed, in: 0.5...2.0)
-                .accessibilityLabel("Custom speed")
-
-            LabeledContent("Pitch offset") {
-                Text("\(player.state.profile.pitchSemitones, specifier: "%+.1f") st")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            Slider(value: pitchOffset, in: -12...12)
-                .accessibilityLabel("Pitch offset")
-
-            Toggle("Link pitch to speed", isOn: pitchLinked)
-            Toggle("Preserve pitch", isOn: pitchPreserved)
-
-            Text("Effective pitch: \(player.state.profile.effectivePitchSemitones, specifier: "%+.1f") semitones")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+struct NightcoreSpeedPresetGrid: View {
+    @EnvironmentObject private var player: PlayerEngine
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 96), spacing: 8)
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Speed preset")
+                .font(.callout.weight(.semibold))
+
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+                ForEach(PlaybackProfile.speedPresets) { preset in
+                    Button {
+                        player.setSpeedPreset(preset)
+                    } label: {
+                        VStack(spacing: 2) {
+                            PlaybackSpeedFormulaView(semitoneOffset: preset.semitoneOffset, size: 15, weight: .bold)
+                                .lineLimit(1)
+
+                            Text(presetSubtitle(for: preset))
+                                .font(.caption2.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(isSelected(preset) ? .black.opacity(0.72) : NightwingTheme.secondaryText)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .foregroundStyle(isSelected(preset) ? .black : NightwingTheme.primaryText)
+                        .background(isSelected(preset) ? NightwingTheme.action : Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(isDefaultPreset(preset) ? NightwingTheme.action.opacity(0.55) : Color.white.opacity(0.08), lineWidth: 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(accessibilityLabel(for: preset))
+                }
+            }
+        }
+    }
+
+    private func isSelected(_ preset: PlaybackSpeedPreset) -> Bool {
+        abs(player.state.profile.clampedSpeed - preset.speed) <= 0.006
+    }
+
+    private func isDefaultPreset(_ preset: PlaybackSpeedPreset) -> Bool {
+        preset.semitoneOffset == Int(PlaybackProfile.nightcorePitchSemitones)
+    }
+
+    private func presetSubtitle(for preset: PlaybackSpeedPreset) -> String {
+        if preset.semitoneOffset == 0 {
+            return "Original"
+        }
+
+        return "\(preset.title) st\(isDefaultPreset(preset) ? " default" : "")"
+    }
+
+    private func accessibilityLabel(for preset: PlaybackSpeedPreset) -> String {
+        if isDefaultPreset(preset) {
+            return "\(PlaybackProfile.speedLabel(for: preset.speed)), default speed, \(preset.title) semitones"
+        }
+
+        return "\(PlaybackProfile.speedLabel(for: preset.speed)), \(preset.title) semitones"
     }
 }
 

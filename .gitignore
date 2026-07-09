@@ -4,6 +4,7 @@
 DerivedData/
 .derivedData*/
 Nightwing.app/
+dist/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/

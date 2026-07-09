@@ -80,8 +80,40 @@ public final class PlayerEngine: ObservableObject {
         try load(item, autoplay: autoplay)
     }
 
+    public func restoreQueue(
+        _ queue: PlaybackQueue,
+        currentTime: TimeInterval,
+        profile: PlaybackProfile,
+        repeatMode: PlaybackRepeatMode,
+        autoplay: Bool = false
+    ) throws {
+        self.preloadLookaheadCount = 1
+        clearPreloadCache()
+        state.profile = profile
+        apply(profile)
+        state.repeatMode = repeatMode
+        state.queue = queue
+
+        guard let item = queue.currentItem else {
+            unload()
+            return
+        }
+
+        try load(item, autoplay: false)
+        if currentTime > 0 {
+            try seek(to: currentTime, autoplay: false)
+        } else {
+            state.status = .paused
+        }
+
+        if autoplay {
+            try play()
+        }
+    }
+
     public func load(
         url: URL,
+        trackID: UUID? = nil,
         title: String? = nil,
         normalizationGain: Double? = nil,
         playbackEndTime: TimeInterval? = nil,
@@ -89,6 +121,7 @@ public final class PlayerEngine: ObservableObject {
         autoplay: Bool = false
     ) throws {
         let item = PlaybackQueueItem(
+            trackID: trackID,
             url: url,
             title: title,
             normalizationGain: normalizationGain,
@@ -100,6 +133,7 @@ public final class PlayerEngine: ObservableObject {
 
     public func enqueue(
         url: URL,
+        trackID: UUID? = nil,
         title: String? = nil,
         normalizationGain: Double? = nil,
         playbackEndTime: TimeInterval? = nil,
@@ -108,6 +142,7 @@ public final class PlayerEngine: ObservableObject {
         var queue = state.queue
         queue.append(
             PlaybackQueueItem(
+                trackID: trackID,
                 url: url,
                 title: title,
                 normalizationGain: normalizationGain,
@@ -121,6 +156,7 @@ public final class PlayerEngine: ObservableObject {
 
     public func playNext(
         url: URL,
+        trackID: UUID? = nil,
         title: String? = nil,
         normalizationGain: Double? = nil,
         playbackEndTime: TimeInterval? = nil,
@@ -129,6 +165,7 @@ public final class PlayerEngine: ObservableObject {
         var queue = state.queue
         queue.playNext(
             PlaybackQueueItem(
+                trackID: trackID,
                 url: url,
                 title: title,
                 normalizationGain: normalizationGain,
@@ -177,14 +214,14 @@ public final class PlayerEngine: ObservableObject {
 
     public func moveQueueItem(id: PlaybackQueueItem.ID, by offset: Int) {
         var queue = state.queue
-        queue.moveItem(id: id, by: offset)
+        guard queue.moveItem(id: id, by: offset) else { return }
         state.queue = queue
         preloadNextItemIfNeeded()
     }
 
     public func moveQueueItem(id: PlaybackQueueItem.ID, to index: Int) {
         var queue = state.queue
-        queue.moveItem(id: id, to: index)
+        guard queue.moveItem(id: id, to: index) else { return }
         state.queue = queue
         preloadNextItemIfNeeded()
     }
@@ -377,7 +414,7 @@ public final class PlayerEngine: ObservableObject {
         let preparedItem = preparedItems[item.id]?.matches(item) == true ? preparedItems[item.id] : nil
         beginLoading(item)
 
-        guard FileManager.default.fileExists(atPath: item.url.path) else {
+        guard !item.url.isFileURL || FileManager.default.fileExists(atPath: item.url.path) else {
             throw fail(.fileDoesNotExist(item.url))
         }
 
