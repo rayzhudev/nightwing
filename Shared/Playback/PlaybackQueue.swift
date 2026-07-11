@@ -118,12 +118,12 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
     public mutating func replace(with items: [PlaybackQueueItem], startingAt index: Int = 0) {
         self.items = items
         currentIndex = items.indices.contains(index) ? index : nil
-        if isShuffled {
-            rebuildShuffledOrder()
-        } else {
-            clearShuffledOrder()
-        }
+        clearShuffledOrder()
         clearUnshuffledItems()
+
+        if isShuffled {
+            shuffleVisibleQueueKeepingCurrent()
+        }
     }
 
     public mutating func setCurrentItem(id: PlaybackQueueItem.ID) {
@@ -159,6 +159,28 @@ public struct PlaybackQueue: Codable, Equatable, Sendable {
         if shouldSelectFirst {
             currentIndex = items.startIndex
         }
+    }
+
+    @discardableResult
+    public mutating func remapTrackURLs(_ urlsByTrackID: [UUID: URL]) -> Bool {
+        guard !urlsByTrackID.isEmpty else { return false }
+
+        var didChange = false
+
+        func remap(_ queueItems: inout [PlaybackQueueItem]) {
+            for index in queueItems.indices {
+                guard let trackID = queueItems[index].trackID,
+                      let updatedURL = urlsByTrackID[trackID],
+                      queueItems[index].url != updatedURL else { continue }
+
+                queueItems[index].url = updatedURL
+                didChange = true
+            }
+        }
+
+        remap(&items)
+        remap(&unshuffledItems)
+        return didChange
     }
 
     public mutating func playNext(_ item: PlaybackQueueItem) {

@@ -58,6 +58,7 @@ struct MacRootView: View {
 private enum MacSidebarSelection: Hashable {
     case home
     case onlineDownloads
+    case onlineAlbum(OnlineAlbumSearchResult.ID)
     case album(LibraryAlbumGroup.ID)
     case playlists
     case playlist(Playlist.ID)
@@ -212,7 +213,6 @@ private struct SpotifySidebarView: View {
 
     private func navigate(to destination: MacSidebarSelection) {
         selection = destination
-        searchText = ""
     }
 }
 
@@ -254,12 +254,18 @@ private struct SpotifyContentView: View {
             )
 
             Group {
-                if trimmedSearchText.isEmpty {
+                if trimmedSearchText.isEmpty || selection != .home {
                     switch selection {
                     case .home:
                         SpotifyHomeView(selection: $selection, searchText: $searchText)
                     case .onlineDownloads:
                         SpotifyOnlineDownloadsView(selectedTrackID: $selectedTrackID)
+                    case .onlineAlbum(let albumID):
+                        if let album = appModel.onlineAlbumResults.first(where: { $0.id == albumID }) {
+                            SpotifyOnlineAlbumDetailView(selection: $selection, album: album)
+                        } else {
+                            SpotifyHomeView(selection: $selection, searchText: $searchText)
+                        }
                     case .album(let albumID):
                         if let album = appModel.albumGroup(id: albumID) {
                             SpotifyAlbumDetailView(album: album, selectedTrackID: $selectedTrackID)
@@ -304,18 +310,15 @@ private struct SpotifyContentView: View {
         .onChange(of: searchText) { _, _ in
             updateOnlineSearch()
         }
-        .onChange(of: selection) { _, _ in
-            if !trimmedSearchText.isEmpty {
-                searchText = ""
-            }
-        }
     }
 
     private func updateOnlineSearch() {
-        if !trimmedSearchText.isEmpty {
+        // A one-character query is too broad for the online provider. Clear the
+        // previous response immediately so it can never masquerade as a match
+        // while the debounced search is starting.
+        appModel.clearOnlineSearchResults()
+        if trimmedSearchText.count > 1 {
             appModel.searchOnline(query: trimmedSearchText)
-        } else {
-            appModel.clearOnlineSearchResults()
         }
     }
 }
@@ -341,6 +344,32 @@ private struct SpotifyTopBar: View {
                     .onSubmit {
                         RecentSearches.add(searchText, to: &recentSearchesData)
                     }
+
+                if !RecentSearches.values(from: recentSearchesData).isEmpty {
+                    Menu {
+                        ForEach(RecentSearches.values(from: recentSearchesData), id: \.self) { query in
+                            Button {
+                                searchText = query
+                                isSearchFocused = true
+                            } label: {
+                                Label(query, systemImage: "clock")
+                            }
+                        }
+
+                        Divider()
+                        Button("Clear Search History", role: .destructive) {
+                            recentSearchesData = ""
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(NightwingTheme.secondaryText)
+                            .frame(width: 24, height: 24)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .help("Recent searches")
+                }
             }
             .padding(.horizontal, 14)
             .frame(width: 320, height: 38)
@@ -389,28 +418,13 @@ private struct SpotifyTopBar: View {
         .padding(.vertical, 16)
     }
 
-    private var activeDownloads: [OnlineDownloadDisplayItem] {
-        let tracks = appModel.onlineSearchResults.compactMap { result -> OnlineDownloadDisplayItem? in
-            guard case let .downloading(progress) = result.downloadState else { return nil }
-            return OnlineDownloadDisplayItem(title: result.title, subtitle: result.artist ?? "Song", progress: progress)
-        }
-        let albums = appModel.onlineAlbumResults.compactMap { album -> OnlineDownloadDisplayItem? in
-            guard case let .downloading(progress) = album.downloadState else { return nil }
-            return OnlineDownloadDisplayItem(title: album.title, subtitle: album.artist ?? "Album", progress: progress)
-        }
-        return tracks + albums
+    private var activeDownloads: [OnlineDownloadActivity] {
+        appModel.activeOnlineDownloads
     }
 }
 
-private struct OnlineDownloadDisplayItem: Identifiable {
-    let id = UUID()
-    let title: String
-    let subtitle: String
-    let progress: Double
-}
-
 private struct OnlineDownloadPopover: View {
-    let items: [OnlineDownloadDisplayItem]
+    let items: [OnlineDownloadActivity]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -528,7 +542,7 @@ private struct SpotifyHomeView: View {
                 }
 
                 if appModel.albumGroups.isEmpty {
-                    SpotifyEmptyImportView()
+                    SpotifyEmptyImportView(searchText: $searchText)
                 } else {
                     if !appModel.recentlyAddedTracks.isEmpty {
                         SearchSection(title: "Recently Added", count: appModel.recentlyAddedTracks.count) {
@@ -622,6 +636,12 @@ private struct SpotifyUnifiedSearchView: View {
     @State private var visiblePlaylistCount = 6
 
     private var topHit: SearchTopHit? {
+        if let preparingOnlineTrack = appModel.onlineSearchResults.first(where: { result in
+            if case .downloading = appModel.onlineTrackDownloadState(for: result) { return true }
+            return false
+        }) {
+            return .onlineTrack(preparingOnlineTrack)
+        }
         if let track = tracks.first { return .track(track) }
         if let album = albums.first { return .album(album) }
         if let playlist = playlists.first { return .playlist(playlist) }
@@ -702,7 +722,7 @@ private struct SpotifyUnifiedSearchView: View {
             }
 
             if showsOnline {
-                SpotifyOnlineResultsSection()
+                SpotifyOnlineResultsSection(selection: $selection)
             }
 
             if tracks.isEmpty,
@@ -796,6 +816,7 @@ private struct SearchLoadMoreButton: View {
 
 private struct SearchTopResultCard: View {
     @EnvironmentObject private var appModel: NightwingAppModel
+    @EnvironmentObject private var player: PlayerEngine
 
     let topHit: SearchTopHit
     @Binding var selection: MacSidebarSelection
@@ -825,8 +846,23 @@ private struct SearchTopResultCard: View {
 
                 Spacer()
 
-                SpotifyRoundPlayButton {
-                    play()
+                if isPreparing {
+                    VStack(spacing: 5) {
+                        ProgressView(value: preparationProgress)
+                            .frame(width: 62)
+                            .tint(NightwingTheme.action)
+                        Text("Preparing")
+                            .font(.caption2)
+                            .foregroundStyle(NightwingTheme.secondaryText)
+                    }
+                } else {
+                    SpotifyRoundPlayButton(isPlaying: isPlayingTopHit) {
+                        if isPlayingTopHit {
+                            appModel.togglePlayback()
+                        } else {
+                            play()
+                        }
+                    }
                 }
             }
             .padding(14)
@@ -839,6 +875,38 @@ private struct SearchTopResultCard: View {
                 Button("Play", systemImage: "play.fill", action: play)
                 menuActions
             }
+        }
+    }
+
+    private var isPreparing: Bool {
+        guard case let .onlineTrack(result) = topHit,
+              case .downloading = appModel.onlineTrackDownloadState(for: result) else { return false }
+        return true
+    }
+
+    private var preparationProgress: Double {
+        guard case let .onlineTrack(result) = topHit,
+              case let .downloading(progress) = appModel.onlineTrackDownloadState(for: result) else { return 0 }
+        return progress
+    }
+
+    private var isPlayingTopHit: Bool {
+        guard player.state.isPlaying else { return false }
+        switch topHit {
+        case let .track(track):
+            return appModel.isCurrentTrack(track)
+        case let .album(album):
+            return album.tracks.contains(where: appModel.isCurrentTrack)
+        case let .playlist(playlist):
+            return appModel.playlistTrackEntries(for: playlist)
+                .contains { appModel.isCurrentTrack($0.track) }
+        case let .onlineTrack(result):
+            guard case let .completed(fileURL) = appModel.onlineTrackDownloadState(for: result) else {
+                return false
+            }
+            return appModel.currentDisplayTrack()?.fileURL.standardizedFileURL.path == fileURL.standardizedFileURL.path
+        case .onlineAlbum:
+            return false
         }
     }
 
@@ -920,7 +988,7 @@ private struct SearchTopResultCard: View {
         case let .onlineTrack(result):
             appModel.playOnlineTrack(result)
         case let .onlineAlbum(album):
-            appModel.downloadOnlineAlbum(album)
+            selection = .onlineAlbum(album.id)
         }
     }
 
@@ -937,6 +1005,7 @@ private struct SearchTopResultCard: View {
 
 private struct SearchLocalTrackRow: View {
     @EnvironmentObject private var appModel: NightwingAppModel
+    @EnvironmentObject private var player: PlayerEngine
 
     let track: Track
     @State private var isHovering = false
@@ -946,9 +1015,13 @@ private struct SearchLocalTrackRow: View {
             ZStack {
                 if isHovering {
                     Button {
-                        appModel.play(track)
+                        if appModel.isCurrentTrack(track) && player.state.isPlaying {
+                            appModel.togglePlayback()
+                        } else {
+                            appModel.play(track)
+                        }
                     } label: {
-                        Image(systemName: "play.fill")
+                        Image(systemName: appModel.isCurrentTrack(track) && player.state.isPlaying ? "pause.fill" : "play.fill")
                             .font(.caption.weight(.bold))
                             .frame(width: 34, height: 28)
                     }
@@ -1030,6 +1103,7 @@ private struct SearchSuggestionView: View {
 
 private struct SpotifyOnlineResultsSection: View {
     @EnvironmentObject private var appModel: NightwingAppModel
+    @Binding var selection: MacSidebarSelection
     @State private var visibleSongCount = 8
 
     var body: some View {
@@ -1042,7 +1116,9 @@ private struct SpotifyOnlineResultsSection: View {
 
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 156, maximum: 190), spacing: 18)], alignment: .leading, spacing: 18) {
                         ForEach(appModel.onlineAlbumResults) { album in
-                            SpotifyOnlineAlbumCard(album: album)
+                            SpotifyOnlineAlbumCard(album: album) {
+                                selection = .onlineAlbum(album.id)
+                            }
                         }
                     }
                 }
@@ -1135,14 +1211,131 @@ private struct SectionDisclosureTitle: View {
     }
 }
 
+private struct SpotifyOnlineAlbumDetailView: View {
+    @EnvironmentObject private var appModel: NightwingAppModel
+    @Binding var selection: MacSidebarSelection
+    let album: OnlineAlbumSearchResult
+
+    private var tracks: [OnlineSearchResult] {
+        appModel.onlineAlbumTracks[album.id] ?? []
+    }
+
+    private var isLoading: Bool {
+        appModel.loadingOnlineAlbumIDs.contains(album.id)
+    }
+
+    private var isDownloading: Bool {
+        if case .downloading = appModel.onlineAlbumDownloadState(for: album) { return true }
+        return false
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                Button {
+                    selection = .home
+                } label: {
+                    Label("Back to search", systemImage: "chevron.left")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(NightwingTheme.secondaryText)
+
+                HStack(alignment: .bottom, spacing: 24) {
+                    AsyncImage(url: album.thumbnailURL) { phase in
+                        if case let .success(image) = phase {
+                            image.resizable().scaledToFill()
+                        } else {
+                            NightwingArtworkPlaceholder(size: 190, cornerRadius: 10, systemImage: "rectangle.stack")
+                        }
+                    }
+                    .frame(width: 190, height: 190)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("ONLINE ALBUM")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(NightwingTheme.secondaryText)
+                        Text(album.title)
+                            .font(.system(size: 44, weight: .black))
+                            .foregroundStyle(NightwingTheme.primaryText)
+                            .lineLimit(2)
+                        Text([album.artist, album.detailText].compactMap { $0 }.joined(separator: " • "))
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(NightwingTheme.secondaryText)
+
+                        HStack(spacing: 12) {
+                            Button {
+                                appModel.playOnlineAlbum(album)
+                            } label: {
+                                Label("Play", systemImage: "play.fill")
+                                    .font(.headline)
+                                    .foregroundStyle(.black)
+                                    .padding(.horizontal, 20)
+                                    .frame(height: 44)
+                                    .background(NightwingTheme.action, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(tracks.isEmpty)
+
+                            Button {
+                                appModel.downloadOnlineAlbum(album)
+                            } label: {
+                                Label(isDownloading ? "Cancel" : "Download", systemImage: isDownloading ? "xmark" : "arrow.down.circle")
+                                    .padding(.horizontal, 16)
+                                    .frame(height: 40)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    Spacer()
+                }
+
+                if isLoading {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(NightwingTheme.action)
+                        Text("Loading track list…")
+                            .foregroundStyle(NightwingTheme.secondaryText)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                } else if let error = appModel.onlineAlbumTrackErrors[album.id], tracks.isEmpty {
+                    VStack(spacing: 12) {
+                        Text("Track preview unavailable")
+                            .font(.headline)
+                        Text(error)
+                            .font(.callout)
+                            .foregroundStyle(NightwingTheme.secondaryText)
+                        Button("Try Again") { appModel.loadOnlineAlbumTracks(album, force: true) }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                } else {
+                    VStack(spacing: 5) {
+                        ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                            HStack(spacing: 12) {
+                                Text("\(index + 1)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(NightwingTheme.secondaryText)
+                                    .frame(width: 28)
+                                SpotifyOnlineResultRow(result: track)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(28)
+        }
+        .onAppear { appModel.loadOnlineAlbumTracks(album) }
+    }
+}
+
 private struct SpotifyOnlineAlbumCard: View {
     @EnvironmentObject private var appModel: NightwingAppModel
 
     let album: OnlineAlbumSearchResult
+    let open: () -> Void
     @State private var isHovering = false
 
     private var isDownloading: Bool {
-        if case .downloading = album.downloadState {
+        if case .downloading = appModel.onlineAlbumDownloadState(for: album) {
             return true
         }
         return false
@@ -1178,9 +1371,9 @@ private struct SpotifyOnlineAlbumCard: View {
                                 .frame(width: 42, height: 42)
 
                             if isDownloading {
-                                ProgressView()
-                                    .scaleEffect(0.6)
-                                    .tint(.black)
+                                Image(systemName: "xmark")
+                                    .font(.callout.weight(.bold))
+                                    .foregroundStyle(.black)
                             } else {
                                 Image(systemName: completedFolderURL == nil ? "arrow.down" : "checkmark")
                                     .font(.callout.weight(.bold))
@@ -1189,9 +1382,10 @@ private struct SpotifyOnlineAlbumCard: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .disabled(isDownloading || completedFolderURL != nil)
+                    .disabled(completedFolderURL != nil)
                     .padding(10)
-                    .accessibilityLabel("Download \(album.title)")
+                    .help(isDownloading ? "Cancel download" : "Download album")
+                    .accessibilityLabel(isDownloading ? "Cancel download of \(album.title)" : "Download \(album.title)")
                 }
             }
 
@@ -1209,13 +1403,17 @@ private struct SpotifyOnlineAlbumCard: View {
         .padding(12)
         .background(isHovering ? NightwingTheme.rowHover : NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onTapGesture(perform: open)
         .onHover { isHovering = $0 }
         .contextMenu {
-            if completedFolderURL == nil {
+            if isDownloading {
+                Button("Cancel Download", systemImage: "xmark.circle", role: .destructive) {
+                    appModel.cancelOnlineAlbumDownload(album)
+                }
+            } else if completedFolderURL == nil {
                 Button("Download Album", systemImage: "arrow.down.circle") {
                     appModel.downloadOnlineAlbum(album)
                 }
-                .disabled(isDownloading)
             }
         }
     }
@@ -1230,7 +1428,7 @@ private struct SpotifyOnlineAlbumCard: View {
     }
 
     private var completedFolderURL: URL? {
-        if case let .completed(folderURL) = album.downloadState {
+        if case let .completed(folderURL) = appModel.onlineAlbumDownloadState(for: album) {
             return folderURL
         }
         return nil
@@ -1247,8 +1445,12 @@ private struct SpotifyOnlineResultRow: View {
         formattedDuration(result.duration)
     }
 
+    private var downloadState: OnlineSearchResult.DownloadState {
+        appModel.onlineTrackDownloadState(for: result)
+    }
+
     private var isPreparing: Bool {
-        if case .downloading = result.downloadState {
+        if case .downloading = downloadState {
             return true
         }
         return false
@@ -1358,7 +1560,7 @@ private struct SpotifyOnlineResultRow: View {
 
     @ViewBuilder
     private var preparationText: some View {
-        switch result.downloadState {
+        switch downloadState {
         case let .downloading(progress):
             Text("Preparing \(Int(progress * 100))%")
 
@@ -1375,7 +1577,7 @@ private struct SpotifyOnlineResultRow: View {
     }
 
     private var completedFileURL: URL? {
-        if case let .completed(fileURL) = result.downloadState {
+        if case let .completed(fileURL) = downloadState {
             return fileURL
         }
         return nil
@@ -2007,6 +2209,7 @@ private struct QueueItemDropDelegate: DropDelegate {
 
 private struct SpotifyAlbumCard: View {
     @EnvironmentObject private var appModel: NightwingAppModel
+    @EnvironmentObject private var player: PlayerEngine
 
     let album: LibraryAlbumGroup
     let open: () -> Void
@@ -2022,11 +2225,17 @@ private struct SpotifyAlbumCard: View {
                         .clipped()
                 }
                 .aspectRatio(1, contentMode: .fit)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: open)
 
                 Button {
-                    appModel.playAlbum(album)
+                    if isPlayingAlbum {
+                        appModel.togglePlayback()
+                    } else {
+                        appModel.playAlbum(album)
+                    }
                 } label: {
-                    Image(systemName: "play.fill")
+                    Image(systemName: isPlayingAlbum ? "pause.fill" : "play.fill")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(.black)
                         .frame(width: 46, height: 46)
@@ -2054,15 +2263,13 @@ private struct SpotifyAlbumCard: View {
                     .foregroundStyle(NightwingTheme.secondaryText)
                     .lineLimit(2)
             }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: open)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isHovering ? NightwingTheme.panelElevated : NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onTapGesture(count: 2) {
-            appModel.playAlbum(album)
-        }
-        .onTapGesture(perform: open)
         .onHover { isHovering = $0 }
         .contextMenu {
             Button("Play", systemImage: "play.fill") {
@@ -2075,6 +2282,10 @@ private struct SpotifyAlbumCard: View {
                 }
             }
         }
+    }
+
+    private var isPlayingAlbum: Bool {
+        player.state.isPlaying && album.tracks.contains(where: appModel.isCurrentTrack)
     }
 }
 
@@ -2222,9 +2433,13 @@ private struct SpotifyTrackRow: View {
             ZStack {
                 if isHovering {
                     Button {
-                        playTrack()
+                        if isCurrent && player.state.isPlaying {
+                            appModel.togglePlayback()
+                        } else {
+                            playTrack()
+                        }
                     } label: {
-                        Image(systemName: "play.fill")
+                        Image(systemName: isCurrent && player.state.isPlaying ? "pause.fill" : "play.fill")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(NightwingTheme.primaryText)
                             .frame(width: 34, height: 28)
@@ -2405,18 +2620,25 @@ private struct SpotifyArtworkView: View {
 }
 
 private struct SpotifyRoundPlayButton: View {
+    var isPlaying = false
     let action: () -> Void
+
+    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "play.fill")
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(.black)
-                .frame(width: 58, height: 58)
+                .frame(width: isHovering ? 62 : 58, height: isHovering ? 62 : 58)
                 .background(NightwingTheme.action, in: Circle())
+                .brightness(isHovering ? 0.08 : 0)
         }
         .buttonStyle(.plain)
         .shadow(color: .black.opacity(0.35), radius: 10, y: 5)
+        .animation(.easeOut(duration: 0.12), value: isHovering)
+        .onHover { isHovering = $0 }
+        .help(isPlaying ? "Pause" : "Play")
     }
 }
 
@@ -2616,17 +2838,28 @@ private struct SpotifyLibraryRow: View {
 }
 
 private struct SpotifyEmptyImportView: View {
+    @Binding var searchText: String
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Start with a folder")
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Discover music")
                 .font(.title2.weight(.bold))
                 .foregroundStyle(NightwingTheme.primaryText)
-            Text("Import a folder of albums and they will appear here as playable cards.")
+            Text("Search YouTube Music above, or start with one of these suggestions. You can still import a local folder with the + button.")
                 .font(.callout)
                 .foregroundStyle(NightwingTheme.secondaryText)
+
+            HStack(spacing: 10) {
+                ForEach(["New music", "Nightcore", "Chill mix"], id: \.self) { suggestion in
+                    Button(suggestion) {
+                        searchText = suggestion
+                    }
+                    .buttonStyle(SpotifyPillButtonStyle())
+                }
+            }
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, minHeight: 260, alignment: .leading)
+        .padding(24)
+        .frame(maxWidth: .infinity, minHeight: 170, alignment: .leading)
         .background(NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

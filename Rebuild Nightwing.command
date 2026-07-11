@@ -15,11 +15,29 @@ ARCHIVE_PATH="$RELEASE_ROOT/Nightwing.xcarchive"
 ARCHIVED_APP_PATH="$ARCHIVE_PATH/Products/Applications/Nightwing macOS.app"
 RELEASE_APP_PATH="$RELEASE_ROOT/Nightwing.app"
 RELEASE_YTDLP_PATH="$RELEASE_APP_PATH/Contents/Resources/yt-dlp"
-RELEASE_YTDLP_ENTITLEMENTS_PATH="/private/tmp/nightwing-yt-dlp.entitlements"
-NOTARY_UPLOAD_ZIP_PATH="$RELEASE_ROOT/Nightwing-notary-upload.zip"
 FINAL_ZIP_PATH="$RELEASE_ROOT/Nightwing-macOS.zip"
+FINAL_ZIP_CHECKSUM_PATH="$FINAL_ZIP_PATH.sha256"
+RELEASE_TEMP_DIR=""
+RELEASE_YTDLP_ENTITLEMENTS_PATH=""
+RELEASE_VERIFY_ROOT=""
+NOTARY_UPLOAD_ZIP_PATH=""
 
 cd "$PROJECT_DIR"
+
+cleanup_release_temp() {
+  if [[ -z "$RELEASE_TEMP_DIR" || ! -d "$RELEASE_TEMP_DIR" ]]; then
+    return
+  fi
+
+  case "$RELEASE_TEMP_DIR" in
+    /private/tmp/nightwing-release.*)
+      rm -rf -- "$RELEASE_TEMP_DIR" || echo "Warning: could not remove release temp directory: $RELEASE_TEMP_DIR" >&2
+      ;;
+    *)
+      echo "Warning: refusing to remove unexpected release temp directory: $RELEASE_TEMP_DIR" >&2
+      ;;
+  esac
+}
 
 build_local() {
   echo "Building Nightwing for macOS..."
@@ -57,6 +75,18 @@ build_release() {
   echo "Building signed Nightwing release for distribution..."
   echo
 
+  if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+    echo "Release builds require a clean Git working tree."
+    echo "Finish, review, and commit the current changes before creating a distributable build."
+    return 1
+  fi
+
+  if [[ ! -f "$PROJECT_DIR/Shared/Resources/yt-dlp" ]]; then
+    echo "Missing required bundled helper:"
+    echo "$PROJECT_DIR/Shared/Resources/yt-dlp"
+    return 1
+  fi
+
   if ! security find-identity -v -p codesigning | grep -F "$DEVELOPER_ID_IDENTITY" >/dev/null; then
     echo "Missing signing identity:"
     echo "$DEVELOPER_ID_IDENTITY"
@@ -65,8 +95,17 @@ build_release() {
     return 1
   fi
 
+  RELEASE_TEMP_DIR="$(mktemp -d /private/tmp/nightwing-release.XXXXXX)"
+  RELEASE_YTDLP_ENTITLEMENTS_PATH="$RELEASE_TEMP_DIR/yt-dlp.entitlements"
+  RELEASE_VERIFY_ROOT="$RELEASE_TEMP_DIR/final-zip"
+  NOTARY_UPLOAD_ZIP_PATH="$RELEASE_TEMP_DIR/Nightwing-notary-upload.zip"
+  trap 'cleanup_release_temp' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
   mkdir -p "$RELEASE_ROOT"
-  rm -rf "$ARCHIVE_PATH" "$RELEASE_APP_PATH" "$NOTARY_UPLOAD_ZIP_PATH" "$FINAL_ZIP_PATH"
+  rm -rf "$ARCHIVE_PATH" "$RELEASE_APP_PATH" "$FINAL_ZIP_PATH" "$FINAL_ZIP_CHECKSUM_PATH"
 
   xcodebuild \
     -project Nightwing.xcodeproj \
@@ -77,6 +116,11 @@ build_release() {
     DEVELOPMENT_TEAM="$TEAM_ID" \
     CODE_SIGN_IDENTITY="$DEVELOPER_ID_IDENTITY" \
     CODE_SIGN_STYLE=Manual \
+    ENABLE_CODE_COVERAGE=NO \
+    CLANG_COVERAGE_MAPPING=NO \
+    DEAD_CODE_STRIPPING=YES \
+    ONLY_ACTIVE_ARCH=NO \
+    ARCHS="arm64 x86_64" \
     archive
 
   if [[ ! -d "$ARCHIVED_APP_PATH" ]]; then
@@ -87,10 +131,29 @@ build_release() {
 
   ditto "$ARCHIVED_APP_PATH" "$RELEASE_APP_PATH"
 
+  local release_version
+  local release_build
+  release_version="$(plutil -extract CFBundleShortVersionString raw -o - "$RELEASE_APP_PATH/Contents/Info.plist")"
+  release_build="$(plutil -extract CFBundleVersion raw -o - "$RELEASE_APP_PATH/Contents/Info.plist")"
+  echo "Archived Nightwing version $release_version ($release_build)."
+
+  local release_binary_path="$RELEASE_APP_PATH/Contents/MacOS/Nightwing macOS"
+  if ! lipo "$release_binary_path" -verify_arch arm64 x86_64; then
+    echo "Release binary is not universal (arm64 + x86_64):"
+    lipo -info "$release_binary_path" || true
+    return 1
+  fi
+  echo "Release binary includes Apple Silicon and Intel architectures."
+
   echo
   echo "Signing bundled executable resources..."
-  if [[ -f "$RELEASE_YTDLP_PATH" ]]; then
-    cat > "$RELEASE_YTDLP_ENTITLEMENTS_PATH" <<'PLIST'
+  if [[ ! -f "$RELEASE_YTDLP_PATH" ]]; then
+    echo "Archive is missing required bundled helper:"
+    echo "$RELEASE_YTDLP_PATH"
+    return 1
+  fi
+
+  cat > "$RELEASE_YTDLP_ENTITLEMENTS_PATH" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -101,16 +164,23 @@ build_release() {
 </plist>
 PLIST
 
-    chmod +x "$RELEASE_YTDLP_PATH"
-    codesign \
-      --force \
-      --options runtime \
-      --entitlements "$RELEASE_YTDLP_ENTITLEMENTS_PATH" \
-      --timestamp \
-      --sign "$DEVELOPER_ID_IDENTITY" \
-      "$RELEASE_YTDLP_PATH"
-    codesign --verify --strict --verbose=2 "$RELEASE_YTDLP_PATH"
+  chmod +x "$RELEASE_YTDLP_PATH"
+  codesign \
+    --force \
+    --options runtime \
+    --entitlements "$RELEASE_YTDLP_ENTITLEMENTS_PATH" \
+    --timestamp \
+    --sign "$DEVELOPER_ID_IDENTITY" \
+    "$RELEASE_YTDLP_PATH"
+  codesign --verify --strict --verbose=2 "$RELEASE_YTDLP_PATH"
+
+  local signed_ytdlp_version
+  signed_ytdlp_version="$("$RELEASE_YTDLP_PATH" --version)"
+  if [[ -z "$signed_ytdlp_version" ]]; then
+    echo "The signed yt-dlp helper did not report a version."
+    return 1
   fi
+  echo "Signed yt-dlp helper is runnable (version $signed_ytdlp_version)."
 
   echo
   echo "Refreshing Developer ID signature..."
@@ -143,9 +213,47 @@ PLIST
   ditto -c -k --keepParent "$RELEASE_APP_PATH" "$FINAL_ZIP_PATH"
   rm -f "$NOTARY_UPLOAD_ZIP_PATH"
 
+  echo "Validating the exact distributable zip..."
+  mkdir -p "$RELEASE_VERIFY_ROOT"
+  ditto -x -k "$FINAL_ZIP_PATH" "$RELEASE_VERIFY_ROOT"
+
+  local verified_app_path="$RELEASE_VERIFY_ROOT/Nightwing.app"
+  local verified_ytdlp_path="$verified_app_path/Contents/Resources/yt-dlp"
+  local verified_binary_path="$verified_app_path/Contents/MacOS/Nightwing macOS"
+  if [[ ! -d "$verified_app_path" || ! -f "$verified_ytdlp_path" ]]; then
+    echo "The final zip did not contain the expected Nightwing app and yt-dlp helper."
+    return 1
+  fi
+
+  if ! lipo "$verified_binary_path" -verify_arch arm64 x86_64; then
+    echo "The packaged app is missing a required architecture."
+    lipo -info "$verified_binary_path" || true
+    return 1
+  fi
+
+  codesign --verify --strict --verbose=2 "$verified_ytdlp_path"
+  local verified_ytdlp_version
+  verified_ytdlp_version="$("$verified_ytdlp_path" --version)"
+  if [[ "$verified_ytdlp_version" != "$signed_ytdlp_version" ]]; then
+    echo "The packaged yt-dlp helper failed its version smoke check."
+    return 1
+  fi
+  codesign --verify --deep --strict --verbose=2 "$verified_app_path"
+  xcrun stapler validate "$verified_app_path"
+  spctl --assess --type execute --verbose=4 "$verified_app_path"
+
+  local checksum_output
+  local final_zip_sha256
+  checksum_output="$(shasum -a 256 "$FINAL_ZIP_PATH")"
+  final_zip_sha256="${checksum_output%% *}"
+  printf '%s  %s\n' "$final_zip_sha256" "${FINAL_ZIP_PATH:t}" > "$FINAL_ZIP_CHECKSUM_PATH"
+
   echo
   echo "Release package is ready:"
   echo "$FINAL_ZIP_PATH"
+  echo "SHA-256: $final_zip_sha256"
+  echo "Checksum file:"
+  echo "$FINAL_ZIP_CHECKSUM_PATH"
 }
 
 case "${1:-}" in

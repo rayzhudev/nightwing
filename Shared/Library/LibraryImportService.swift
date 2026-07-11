@@ -15,6 +15,13 @@ public struct LibraryImportService {
     }
 
     public func importFile(at fileURL: URL, albumOverride: String? = nil) async throws -> Track {
+        let didStartAccessing = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                fileURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
         guard let fileType = AudioFileType(fileExtension: fileURL.pathExtension) else {
             throw ImportError.unsupportedFileType(fileURL)
         }
@@ -149,6 +156,13 @@ public struct LibraryImportService {
     }
 
     public func importFolder(at folderURL: URL, recursive: Bool = true) async throws -> (FolderSource, LibraryImportResult) {
+        let didStartAccessing = folderURL.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                folderURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw ImportError.notAFolder(folderURL)

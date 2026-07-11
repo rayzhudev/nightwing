@@ -10,6 +10,7 @@ struct NightwingMacApp: App {
                 .environmentObject(appModel)
                 .environmentObject(appModel.player)
         }
+        .defaultSize(width: 1280, height: 800)
         .commands {
             SidebarCommands()
             PlaybackCommands(appModel: appModel)

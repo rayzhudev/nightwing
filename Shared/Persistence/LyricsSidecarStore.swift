@@ -63,14 +63,8 @@ public actor LyricsSidecarStore {
     public func save(_ document: LyricsDocument, cacheKey: String) throws {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         let url = fileURL(for: cacheKey)
-        let temporaryURL = directoryURL.appendingPathComponent(".\(url.lastPathComponent).tmp")
         let data = try encoder.encode(document)
-        try data.write(to: temporaryURL, options: [.atomic])
-
-        if fileManager.fileExists(atPath: url.path) {
-            try fileManager.removeItem(at: url)
-        }
-        try fileManager.moveItem(at: temporaryURL, to: url)
+        try data.write(to: url, options: [.atomic])
     }
 
     public func delete(cacheKey: String) throws {

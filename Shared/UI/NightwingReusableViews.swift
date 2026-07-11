@@ -19,6 +19,37 @@ private struct PlaybackResumeSnapshot: Equatable {
     var resumeState: PlaybackResumeState?
 }
 
+#if os(macOS)
+struct OnlineDownloadActivity: Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let progress: Double
+}
+
+private enum OnlineSearchPartialResult: Sendable {
+    case tracks([OnlineSearchResult])
+    case albums([OnlineAlbumSearchResult])
+    case trackFailure(String)
+    case albumFailure(String)
+    case cancelled
+}
+
+private struct PendingOnlineTrackAction {
+    let success: (Track) -> Void
+    let failure: () -> Void
+}
+
+private struct OrderedOnlineQueueFill {
+    let generation: UUID
+    let playbackRequestID: UUID
+    let totalCount: Int
+    var nextIndex = 0
+    var preparedTracks: [Int: Track] = [:]
+    var failedIndexes: Set<Int> = []
+}
+#endif
+
 @MainActor
 final class NightwingAppModel: ObservableObject {
     private static let playbackAnalysisThrottleNanoseconds: UInt64 = 120_000_000
@@ -41,6 +72,11 @@ final class NightwingAppModel: ObservableObject {
     @Published private(set) var onlineSearchResults: [OnlineSearchResult] = []
     @Published private(set) var onlineAlbumResults: [OnlineAlbumSearchResult] = []
     @Published private(set) var isSearchingOnline = false
+    @Published private(set) var onlineAlbumTracks: [OnlineAlbumSearchResult.ID: [OnlineSearchResult]] = [:]
+    @Published private(set) var loadingOnlineAlbumIDs: Set<OnlineAlbumSearchResult.ID> = []
+    @Published private(set) var onlineAlbumTrackErrors: [OnlineAlbumSearchResult.ID: String] = [:]
+    @Published private(set) var onlineTrackDownloadStates: [OnlineSearchResult.ID: OnlineSearchResult.DownloadState] = [:]
+    @Published private(set) var onlineAlbumDownloadStates: [OnlineAlbumSearchResult.ID: OnlineSearchResult.DownloadState] = [:]
     #endif
 
     let player = PlayerEngine(profile: .nightcore)
@@ -48,19 +84,29 @@ final class NightwingAppModel: ObservableObject {
     private let importService = LibraryImportService()
     private let lyricsStore: LyricsSidecarStore?
     private let lyricsTranscriptionService = LyricsTranscriptionService()
+    private let canonicalLyricsService = CanonicalLyricsService()
     private var lyricsLoadTasks: [Track.ID: Task<Void, Never>] = [:]
     private var lyricsGenerationTasks: [Track.ID: Task<Void, Never>] = [:]
     #if os(macOS)
     private let onlineSearchService = YtDlpDownloadService()
     private var onlineSearchTask: Task<Void, Never>?
-    private var pendingOnlineTrackActions: [OnlineSearchResult.ID: [(Track) -> Void]] = [:]
+    private var onlineSearchGeneration: UUID?
+    private var pendingOnlineTrackActions: [OnlineSearchResult.ID: [PendingOnlineTrackAction]] = [:]
     private var onlineTrackDownloadTasks: [OnlineSearchResult.ID: Task<Void, Never>] = [:]
     private var onlineAlbumDownloadTasks: [OnlineAlbumSearchResult.ID: Task<Void, Never>] = [:]
-    private var onlineTrackDownloadStates: [OnlineSearchResult.ID: OnlineSearchResult.DownloadState] = [:]
-    private var onlineAlbumDownloadStates: [OnlineAlbumSearchResult.ID: OnlineSearchResult.DownloadState] = [:]
+    private var onlineTrackDownloadGenerations: [OnlineSearchResult.ID: UUID] = [:]
+    private var onlineAlbumDownloadGenerations: [OnlineAlbumSearchResult.ID: UUID] = [:]
+    private var onlineTrackDownloadMetadata: [OnlineSearchResult.ID: OnlineSearchResult] = [:]
+    private var onlineAlbumDownloadMetadata: [OnlineAlbumSearchResult.ID: OnlineAlbumSearchResult] = [:]
+    private var onlineAlbumTrackTasks: [OnlineAlbumSearchResult.ID: Task<Void, Never>] = [:]
+    private var onlineAlbumTrackGenerations: [OnlineAlbumSearchResult.ID: UUID] = [:]
+    private var onlineQueueGeneration: UUID?
+    private var orderedOnlineQueueFill: OrderedOnlineQueueFill?
+    private var onlineQueueSuggestionTask: Task<Void, Never>?
     #endif
     private let store: JSONLocalLibraryStore?
     private var folderRefreshTimer: Timer?
+    private var folderRefreshTask: Task<Void, Never>?
     private var playbackAnalysisTask: Task<Void, Never>?
     private var playbackRequestID = UUID()
     private var playbackStateCancellable: AnyCancellable?
@@ -96,6 +142,7 @@ final class NightwingAppModel: ObservableObject {
 
     deinit {
         folderRefreshTimer?.invalidate()
+        folderRefreshTask?.cancel()
         playbackAnalysisTask?.cancel()
         playbackStateCancellable?.cancel()
         playbackResumeSaveTask?.cancel()
@@ -103,6 +150,10 @@ final class NightwingAppModel: ObservableObject {
         lyricsGenerationTasks.values.forEach { $0.cancel() }
         #if os(macOS)
         onlineSearchTask?.cancel()
+        onlineTrackDownloadTasks.values.forEach { $0.cancel() }
+        onlineAlbumDownloadTasks.values.forEach { $0.cancel() }
+        onlineAlbumTrackTasks.values.forEach { $0.cancel() }
+        onlineQueueSuggestionTask?.cancel()
         #endif
         #if os(iOS)
         if let musicLibraryChangeObserver {
@@ -211,35 +262,92 @@ final class NightwingAppModel: ObservableObject {
             onlineSearchResults = []
             onlineAlbumResults = []
             isSearchingOnline = false
+            onlineSearchGeneration = nil
+            onlineSearchTask = nil
             return
         }
 
-        onlineSearchTask = Task { @MainActor [weak self] in
-            self?.isSearchingOnline = true
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled, let self else { return }
+        let generation = UUID()
+        onlineSearchGeneration = generation
+        isSearchingOnline = true
+        let service = onlineSearchService
 
-            do {
-                async let trackResults = onlineSearchService.search(query: trimmedQuery)
-                async let albumResults = onlineSearchService.searchAlbums(query: trimmedQuery)
-                let results = try await trackResults
-                let albums = try await albumResults
-                guard !Task.isCancelled else { return }
-                onlineSearchResults = await resultsWithCacheState(results)
-                onlineAlbumResults = await albumsWithDownloadState(albums)
-            } catch {
-                guard !Task.isCancelled else { return }
-                onlineSearchResults = []
-                onlineAlbumResults = []
-                statusMessage = "Online search failed: \(error.localizedDescription)"
+        onlineSearchTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.onlineSearchGeneration == generation {
+                    self.isSearchingOnline = false
+                    self.onlineSearchTask = nil
+                }
             }
 
-            isSearchingOnline = false
+            do {
+                try await Task.sleep(nanoseconds: 350_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, onlineSearchGeneration == generation else { return }
+
+            var trackFailure: String?
+            var albumFailure: String?
+            await withTaskGroup(of: OnlineSearchPartialResult.self) { group in
+                group.addTask {
+                    do {
+                        return .tracks(try await service.search(query: trimmedQuery))
+                    } catch is CancellationError {
+                        return .cancelled
+                    } catch {
+                        return .trackFailure(error.localizedDescription)
+                    }
+                }
+                group.addTask {
+                    do {
+                        return .albums(try await service.searchAlbums(query: trimmedQuery))
+                    } catch is CancellationError {
+                        return .cancelled
+                    } catch {
+                        return .albumFailure(error.localizedDescription)
+                    }
+                }
+
+                for await partialResult in group {
+                    guard !Task.isCancelled, self.onlineSearchGeneration == generation else {
+                        group.cancelAll()
+                        return
+                    }
+
+                    switch partialResult {
+                    case let .tracks(results):
+                        let hydratedResults = await self.resultsWithCacheState(results)
+                        guard self.onlineSearchGeneration == generation else { return }
+                        self.onlineSearchResults = hydratedResults
+                    case let .albums(albums):
+                        let hydratedAlbums = await self.albumsWithDownloadState(albums)
+                        guard self.onlineSearchGeneration == generation else { return }
+                        self.onlineAlbumResults = hydratedAlbums
+                    case let .trackFailure(message):
+                        trackFailure = message
+                    case let .albumFailure(message):
+                        albumFailure = message
+                    case .cancelled:
+                        break
+                    }
+                }
+            }
+
+            if let trackFailure, let albumFailure,
+               onlineSearchGeneration == generation,
+               onlineSearchResults.isEmpty,
+               onlineAlbumResults.isEmpty {
+                statusMessage = "Online search failed: \(trackFailure); \(albumFailure)"
+            }
         }
     }
 
     func clearOnlineSearchResults() {
         onlineSearchTask?.cancel()
+        onlineSearchTask = nil
+        onlineSearchGeneration = nil
         onlineSearchResults = []
         onlineAlbumResults = []
         isSearchingOnline = false
@@ -250,18 +358,27 @@ final class NightwingAppModel: ObservableObject {
     }
 
     func downloadOnlineTrack(_ result: OnlineSearchResult) {
-        prepareOnlineTrack(result, autoplay: false)
+        prepareOnlineTrack(result)
     }
 
     func deleteOnlineTrack(_ result: OnlineSearchResult) {
         let sourceHash = OnlineTrackStore.hashKey(for: result.sourceURL)
         Task { @MainActor [weak self] in
             guard let self else { return }
-            guard let cached = try? await onlineSearchService.getCachedEntry(sourceHash: sourceHash) else {
+            let cached = try? await onlineSearchService.getCachedEntry(sourceHash: sourceHash)
+            let fileURL: URL?
+            if let cached {
+                fileURL = URL(fileURLWithPath: cached.localFileURL)
+            } else if case let .completed(completedURL) = onlineTrackDownloadState(for: result) {
+                fileURL = completedURL
+            } else {
+                fileURL = nil
+            }
+            guard let fileURL else {
                 setOnlineDownloadState(for: result.id, state: .idle)
                 return
             }
-            await deleteOnlineDownloadedFile(URL(fileURLWithPath: cached.localFileURL))
+            await deleteOnlineDownloadedFile(fileURL)
             setOnlineDownloadState(for: result.id, state: .idle)
         }
     }
@@ -294,28 +411,47 @@ final class NightwingAppModel: ObservableObject {
         }
 
         if onlineAlbumDownloadTasks[albumID] != nil {
-            setOnlineAlbumDownloadState(for: albumID, state: onlineAlbumDownloadStates[albumID] ?? .downloading(progress: 0))
+            cancelOnlineAlbumDownload(album)
             return
         }
 
+        let generation = UUID()
+        onlineAlbumDownloadGenerations[albumID] = generation
+        onlineAlbumDownloadMetadata[albumID] = album
         setOnlineAlbumDownloadState(for: albumID, state: .downloading(progress: 0))
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.onlineAlbumDownloadTasks[albumID] = nil
+                if self.onlineAlbumDownloadGenerations[albumID] == generation {
+                    self.onlineAlbumDownloadTasks[albumID] = nil
+                    self.onlineAlbumDownloadGenerations[albumID] = nil
+                }
             }
 
             do {
                 let albumFolderURL = try await onlineSearchService.downloadAlbum(album) { progress in
                     Task { @MainActor [weak self] in
-                        self?.setOnlineAlbumDownloadState(for: albumID, state: .downloading(progress: progress))
+                        guard let self,
+                              self.onlineAlbumDownloadGenerations[albumID] == generation,
+                              self.onlineAlbumDownloadStates[albumID]?.isDownloading == true else {
+                            return
+                        }
+                        self.setOnlineAlbumDownloadState(for: albumID, state: .downloading(progress: progress))
                     }
                 }
 
+                try Task.checkCancellation()
+                guard onlineAlbumDownloadGenerations[albumID] == generation else { return }
                 setOnlineAlbumDownloadState(for: albumID, state: .completed(fileURL: albumFolderURL))
                 await importDownloadedOnlineAlbum(albumFolderURL, fallback: album)
             } catch {
+                guard onlineAlbumDownloadGenerations[albumID] == generation else { return }
+                if error is CancellationError || Task.isCancelled {
+                    setOnlineAlbumDownloadState(for: albumID, state: .idle)
+                    statusMessage = "Cancelled album download."
+                    return
+                }
                 setOnlineAlbumDownloadState(for: albumID, state: .failed(error.localizedDescription))
                 statusMessage = "Album download failed: \(error.localizedDescription)"
             }
@@ -323,42 +459,276 @@ final class NightwingAppModel: ObservableObject {
         onlineAlbumDownloadTasks[albumID] = task
     }
 
+    func loadOnlineAlbumTracks(_ album: OnlineAlbumSearchResult, force: Bool = false) {
+        if !force, onlineAlbumTracks[album.id] != nil { return }
+        if force {
+            onlineAlbumTrackTasks[album.id]?.cancel()
+        } else if onlineAlbumTrackTasks[album.id] != nil {
+            return
+        }
+
+        let generation = UUID()
+        onlineAlbumTrackGenerations[album.id] = generation
+        loadingOnlineAlbumIDs.insert(album.id)
+        onlineAlbumTrackErrors[album.id] = nil
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if onlineAlbumTrackGenerations[album.id] == generation {
+                    loadingOnlineAlbumIDs.remove(album.id)
+                    onlineAlbumTrackTasks[album.id] = nil
+                    onlineAlbumTrackGenerations[album.id] = nil
+                }
+            }
+            do {
+                let tracks = try await onlineSearchService.albumTracks(for: album)
+                try Task.checkCancellation()
+                guard onlineAlbumTrackGenerations[album.id] == generation else { return }
+                onlineAlbumTracks[album.id] = await resultsWithCacheState(tracks)
+                if tracks.isEmpty {
+                    onlineAlbumTrackErrors[album.id] = "No preview tracks were returned for this album."
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard onlineAlbumTrackGenerations[album.id] == generation else { return }
+                onlineAlbumTrackErrors[album.id] = error.localizedDescription
+            }
+        }
+        onlineAlbumTrackTasks[album.id] = task
+    }
+
+    func playOnlineAlbum(_ album: OnlineAlbumSearchResult) {
+        let tracks = Array((onlineAlbumTracks[album.id] ?? []).prefix(12))
+        guard let first = tracks.first else {
+            loadOnlineAlbumTracks(album)
+            return
+        }
+
+        let generation = beginOnlineQueueGeneration()
+        prepareOnlineTrack(first) { [weak self] preparedTrack in
+            guard let self,
+                  self.onlineQueueGeneration == generation else { return }
+            self.play(
+                preparedTrack,
+                within: [preparedTrack],
+                preservingOnlineQueueGeneration: generation
+            )
+            let requestID = self.playbackRequestID
+            self.startOrderedOnlineQueueFill(
+                with: Array(tracks.dropFirst()),
+                generation: generation,
+                playbackRequestID: requestID
+            )
+        } failure: { [weak self] in
+            self?.invalidateOnlineQueueGeneration(ifMatching: generation)
+        }
+    }
+
+    func cancelOnlineAlbumDownload(_ album: OnlineAlbumSearchResult) {
+        guard let task = onlineAlbumDownloadTasks[album.id] else { return }
+        task.cancel()
+        setOnlineAlbumDownloadState(for: album.id, state: .idle)
+        statusMessage = "Cancelled album download."
+        Task { [onlineSearchService] in
+            await onlineSearchService.cancelAlbumDownload(album)
+        }
+    }
+
     func playOnlineTrack(_ result: OnlineSearchResult) {
-        prepareOnlineTrack(result, autoplay: true)
+        let generation = beginOnlineQueueGeneration()
+        prepareOnlineTrack(result) { [weak self] track in
+            guard let self,
+                  self.onlineQueueGeneration == generation else { return }
+            self.play(
+                track,
+                within: [track],
+                preservingOnlineQueueGeneration: generation
+            )
+            self.enqueueSuggestedOnlineTracks(
+                after: result,
+                generation: generation,
+                playbackRequestID: self.playbackRequestID
+            )
+        } failure: { [weak self] in
+            self?.invalidateOnlineQueueGeneration(ifMatching: generation)
+        }
     }
 
     func playNextOnlineTrack(_ result: OnlineSearchResult) {
-        prepareOnlineTrack(result, autoplay: false) { [weak self] track in
+        prepareOnlineTrack(result) { [weak self] track in
             self?.playNext(track)
         }
     }
 
     func enqueueOnlineTrack(_ result: OnlineSearchResult) {
-        prepareOnlineTrack(result, autoplay: false) { [weak self] track in
+        prepareOnlineTrack(result) { [weak self] track in
             self?.enqueue(track)
         }
     }
 
-    private func prepareOnlineTrack(_ result: OnlineSearchResult, autoplay: Bool, completion: ((Track) -> Void)? = nil) {
-        let sourceID = result.id
-        let action: ((Track) -> Void)? = (autoplay || completion != nil) ? { [weak self] track in
-            if autoplay {
-                self?.play(track, within: [track])
+    private func enqueueSuggestedOnlineTracks(
+        after seed: OnlineSearchResult,
+        generation: UUID,
+        playbackRequestID: UUID
+    ) {
+        onlineQueueSuggestionTask?.cancel()
+        onlineQueueSuggestionTask = Task { @MainActor [weak self] in
+            guard let self,
+                  onlineQueueGeneration == generation,
+                  self.playbackRequestID == playbackRequestID,
+                  player.state.queue.items.count <= 1 else { return }
+
+            do {
+                let suggestions = try await onlineSearchService.suggestedTracks(after: seed, limit: 4)
+                guard !Task.isCancelled,
+                      onlineQueueGeneration == generation,
+                      self.playbackRequestID == playbackRequestID,
+                      player.state.queue.items.count <= 1 else { return }
+                startOrderedOnlineQueueFill(
+                    with: suggestions,
+                    generation: generation,
+                    playbackRequestID: playbackRequestID
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                // Suggestions are opportunistic; playback of the requested song
+                // must stay successful even if discovery is unavailable.
             }
-            completion?(track)
-        } : nil
+        }
+    }
+
+    private func beginOnlineQueueGeneration() -> UUID {
+        onlineQueueSuggestionTask?.cancel()
+        onlineQueueSuggestionTask = nil
+        orderedOnlineQueueFill = nil
+        let generation = UUID()
+        onlineQueueGeneration = generation
+        return generation
+    }
+
+    private func invalidateOnlineQueueGeneration(ifMatching generation: UUID? = nil) {
+        if let generation, onlineQueueGeneration != generation { return }
+        onlineQueueSuggestionTask?.cancel()
+        onlineQueueSuggestionTask = nil
+        orderedOnlineQueueFill = nil
+        onlineQueueGeneration = nil
+    }
+
+    private func startOrderedOnlineQueueFill(
+        with results: [OnlineSearchResult],
+        generation: UUID,
+        playbackRequestID: UUID
+    ) {
+        guard onlineQueueGeneration == generation,
+              self.playbackRequestID == playbackRequestID,
+              !results.isEmpty else {
+            return
+        }
+
+        orderedOnlineQueueFill = OrderedOnlineQueueFill(
+            generation: generation,
+            playbackRequestID: playbackRequestID,
+            totalCount: results.count
+        )
+
+        for (index, result) in results.enumerated() {
+            prepareOnlineTrack(result) { [weak self] track in
+                self?.recordPreparedOnlineQueueTrack(
+                    track,
+                    at: index,
+                    generation: generation,
+                    playbackRequestID: playbackRequestID
+                )
+            } failure: { [weak self] in
+                self?.recordFailedOnlineQueueTrack(
+                    at: index,
+                    generation: generation,
+                    playbackRequestID: playbackRequestID
+                )
+            }
+        }
+    }
+
+    private func recordPreparedOnlineQueueTrack(
+        _ track: Track,
+        at index: Int,
+        generation: UUID,
+        playbackRequestID: UUID
+    ) {
+        guard var fill = orderedOnlineQueueFill,
+              fill.generation == generation,
+              fill.playbackRequestID == playbackRequestID else { return }
+        fill.preparedTracks[index] = track
+        orderedOnlineQueueFill = fill
+        flushOrderedOnlineQueue(generation: generation, playbackRequestID: playbackRequestID)
+    }
+
+    private func recordFailedOnlineQueueTrack(
+        at index: Int,
+        generation: UUID,
+        playbackRequestID: UUID
+    ) {
+        guard var fill = orderedOnlineQueueFill,
+              fill.generation == generation,
+              fill.playbackRequestID == playbackRequestID else { return }
+        fill.failedIndexes.insert(index)
+        orderedOnlineQueueFill = fill
+        flushOrderedOnlineQueue(generation: generation, playbackRequestID: playbackRequestID)
+    }
+
+    private func flushOrderedOnlineQueue(generation: UUID, playbackRequestID: UUID) {
+        guard onlineQueueGeneration == generation,
+              self.playbackRequestID == playbackRequestID,
+              var fill = orderedOnlineQueueFill,
+              fill.generation == generation,
+              fill.playbackRequestID == playbackRequestID else {
+            invalidateOnlineQueueGeneration(ifMatching: generation)
+            return
+        }
+
+        while fill.nextIndex < fill.totalCount {
+            if let track = fill.preparedTracks.removeValue(forKey: fill.nextIndex) {
+                enqueue(track)
+                fill.nextIndex += 1
+            } else if fill.failedIndexes.remove(fill.nextIndex) != nil {
+                fill.nextIndex += 1
+            } else {
+                break
+            }
+        }
+
+        orderedOnlineQueueFill = fill.nextIndex == fill.totalCount ? nil : fill
+    }
+
+    private func prepareOnlineTrack(
+        _ result: OnlineSearchResult,
+        completion: ((Track) -> Void)? = nil,
+        failure: (() -> Void)? = nil
+    ) {
+        let sourceID = result.id
+        let action = (completion != nil || failure != nil)
+            ? PendingOnlineTrackAction(
+                success: { track in completion?(track) },
+                failure: { failure?() }
+            )
+            : nil
 
         if case let .completed(fileURL) = onlineTrackDownloadState(for: result) {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let track = await importDownloadedOnlineTrack(fileURL, fallback: result) {
-                    action?(track)
+                    action?.success(track)
+                } else {
+                    action?.failure()
                 }
             }
             return
         }
 
-        if onlineTrackDownloadTasks[sourceID] != nil || onlineTrackDownloadState(for: result).isDownloading {
+        if onlineTrackDownloadTasks[sourceID] != nil {
             if let action {
                 appendPendingOnlineTrackAction(action, for: sourceID)
             }
@@ -370,29 +740,49 @@ final class NightwingAppModel: ObservableObject {
             appendPendingOnlineTrackAction(action, for: sourceID)
         }
 
+        let generation = UUID()
+        onlineTrackDownloadGenerations[sourceID] = generation
+        onlineTrackDownloadMetadata[sourceID] = result
         setOnlineDownloadState(for: sourceID, state: .downloading(progress: 0))
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.onlineTrackDownloadTasks[sourceID] = nil
+                if self.onlineTrackDownloadGenerations[sourceID] == generation {
+                    self.onlineTrackDownloadTasks[sourceID] = nil
+                    self.onlineTrackDownloadGenerations[sourceID] = nil
+                }
             }
 
             do {
                 let fileURL = try await onlineSearchService.download(result) { progress in
                     Task { @MainActor [weak self] in
-                        self?.setOnlineDownloadState(for: sourceID, state: .downloading(progress: progress))
+                        guard let self,
+                              self.onlineTrackDownloadGenerations[sourceID] == generation,
+                              self.onlineTrackDownloadStates[sourceID]?.isDownloading == true else {
+                            return
+                        }
+                        self.setOnlineDownloadState(for: sourceID, state: .downloading(progress: progress))
                     }
                 }
 
+                try Task.checkCancellation()
+                guard onlineTrackDownloadGenerations[sourceID] == generation else { return }
                 setOnlineDownloadState(for: sourceID, state: .completed(fileURL: fileURL))
                 if let track = await importDownloadedOnlineTrack(fileURL, fallback: result) {
                     runPendingOnlineTrackActions(for: sourceID, track: track)
+                } else {
+                    failPendingOnlineTrackActions(for: sourceID)
                 }
             } catch {
-                pendingOnlineTrackActions[sourceID] = nil
-                setOnlineDownloadState(for: sourceID, state: .failed(error.localizedDescription))
-                statusMessage = "Download failed: \(error.localizedDescription)"
+                guard onlineTrackDownloadGenerations[sourceID] == generation else { return }
+                failPendingOnlineTrackActions(for: sourceID)
+                if error is CancellationError || Task.isCancelled {
+                    setOnlineDownloadState(for: sourceID, state: .idle)
+                } else {
+                    setOnlineDownloadState(for: sourceID, state: .failed(error.localizedDescription))
+                    statusMessage = "Download failed: \(error.localizedDescription)"
+                }
             }
         }
         onlineTrackDownloadTasks[sourceID] = task
@@ -401,15 +791,22 @@ final class NightwingAppModel: ObservableObject {
     private func runPendingOnlineTrackActions(for id: OnlineSearchResult.ID, track: Track) {
         let actions = pendingOnlineTrackActions.removeValue(forKey: id) ?? []
         for action in actions {
-            action(track)
+            action.success(track)
         }
     }
 
-    private func appendPendingOnlineTrackAction(_ action: @escaping (Track) -> Void, for id: OnlineSearchResult.ID) {
+    private func failPendingOnlineTrackActions(for id: OnlineSearchResult.ID) {
+        let actions = pendingOnlineTrackActions.removeValue(forKey: id) ?? []
+        for action in actions {
+            action.failure()
+        }
+    }
+
+    private func appendPendingOnlineTrackAction(_ action: PendingOnlineTrackAction, for id: OnlineSearchResult.ID) {
         pendingOnlineTrackActions[id, default: []].append(action)
     }
 
-    private func onlineTrackDownloadState(for result: OnlineSearchResult) -> OnlineSearchResult.DownloadState {
+    func onlineTrackDownloadState(for result: OnlineSearchResult) -> OnlineSearchResult.DownloadState {
         if let state = onlineTrackDownloadStates[result.id] {
             return state
         }
@@ -419,7 +816,7 @@ final class NightwingAppModel: ObservableObject {
         return result.downloadState
     }
 
-    private func onlineAlbumDownloadState(for album: OnlineAlbumSearchResult) -> OnlineSearchResult.DownloadState {
+    func onlineAlbumDownloadState(for album: OnlineAlbumSearchResult) -> OnlineSearchResult.DownloadState {
         if let state = onlineAlbumDownloadStates[album.id] {
             return state
         }
@@ -429,11 +826,43 @@ final class NightwingAppModel: ObservableObject {
         return album.downloadState
     }
 
+    var activeOnlineDownloads: [OnlineDownloadActivity] {
+        let tracks = onlineTrackDownloadStates.compactMap { id, state -> OnlineDownloadActivity? in
+            guard case let .downloading(progress) = state,
+                  let result = onlineTrackDownloadMetadata[id] else { return nil }
+            return OnlineDownloadActivity(
+                id: "track-\(id)",
+                title: result.title,
+                subtitle: result.artist ?? "Song",
+                progress: progress
+            )
+        }
+        let albums = onlineAlbumDownloadStates.compactMap { id, state -> OnlineDownloadActivity? in
+            guard case let .downloading(progress) = state,
+                  let album = onlineAlbumDownloadMetadata[id] else { return nil }
+            return OnlineDownloadActivity(
+                id: "album-\(id)",
+                title: album.title,
+                subtitle: album.artist ?? "Album",
+                progress: progress
+            )
+        }
+        return (tracks + albums).sorted {
+            if $0.title != $1.title {
+                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+            return $0.id < $1.id
+        }
+    }
+
     private func setOnlineDownloadState(for id: OnlineSearchResult.ID, state: OnlineSearchResult.DownloadState) {
         if state.isIdle {
             onlineTrackDownloadStates[id] = nil
         } else {
             onlineTrackDownloadStates[id] = state
+        }
+        if !state.isDownloading {
+            onlineTrackDownloadMetadata[id] = nil
         }
 
         guard let index = onlineSearchResults.firstIndex(where: { $0.id == id }) else { return }
@@ -446,6 +875,9 @@ final class NightwingAppModel: ObservableObject {
         } else {
             onlineAlbumDownloadStates[id] = state
         }
+        if !state.isDownloading {
+            onlineAlbumDownloadMetadata[id] = nil
+        }
 
         guard let index = onlineAlbumResults.firstIndex(where: { $0.id == id }) else { return }
         onlineAlbumResults[index].downloadState = state
@@ -457,16 +889,6 @@ final class NightwingAppModel: ObservableObject {
             $0.fileURL.standardizedFileURL.path == standardizedURL.path
         }
 
-        do {
-            _ = try await onlineSearchService.removeCachedEntry(localFileURL: standardizedURL)
-        } catch {
-            statusMessage = "Could not update online cache: \(error.localizedDescription)"
-        }
-
-        for track in tracksToRemove {
-            library.deleteTrack(id: track.id)
-        }
-
         let path = standardizedURL.path
         let onlineTracksMarker = "/Nightwing/Online Downloads/Tracks/"
         let deleteURL: URL
@@ -476,54 +898,83 @@ final class NightwingAppModel: ObservableObject {
             deleteURL = standardizedURL
         }
 
+        guard isInsideOnlineDownloads(deleteURL) else {
+            statusMessage = "Refused to delete a file outside Nightwing's download folder."
+            return
+        }
+
         do {
             if FileManager.default.fileExists(atPath: deleteURL.path) {
                 try FileManager.default.removeItem(at: deleteURL)
             }
-            clearCompletedDownloadStates(matchingDeletedURL: deleteURL, originalURL: standardizedURL)
-            for resultIndex in onlineSearchResults.indices {
-                if completedDownloadState(onlineSearchResults[resultIndex].downloadState, matchesDeletedURL: deleteURL, originalURL: standardizedURL) {
-                    onlineSearchResults[resultIndex].downloadState = .idle
-                }
-            }
-            for albumIndex in onlineAlbumResults.indices {
-                if completedDownloadState(onlineAlbumResults[albumIndex].downloadState, matchesDeletedURL: deleteURL, originalURL: standardizedURL) {
-                    onlineAlbumResults[albumIndex].downloadState = .idle
-                }
-            }
-            Task {
-                await persistLibrary()
-            }
-            statusMessage = "Deleted online download."
         } catch {
             statusMessage = "Could not delete online download: \(error.localizedDescription)"
+            return
         }
+
+        var cacheCleanupError: Error?
+        do {
+            _ = try await onlineSearchService.removeCachedEntry(localFileURL: standardizedURL)
+        } catch {
+            cacheCleanupError = error
+        }
+
+        removeTrackIDsFromLiveQueue(Set(tracksToRemove.map(\.id)))
+        for track in tracksToRemove {
+            library.deleteTrack(id: track.id)
+        }
+        clearCompletedDownloadStates(matchingDeletedURL: deleteURL, originalURL: standardizedURL)
+        for resultIndex in onlineSearchResults.indices {
+            if completedDownloadState(onlineSearchResults[resultIndex].downloadState, matchesDeletedURL: deleteURL, originalURL: standardizedURL) {
+                onlineSearchResults[resultIndex].downloadState = .idle
+            }
+        }
+        for albumIndex in onlineAlbumResults.indices {
+            if completedDownloadState(onlineAlbumResults[albumIndex].downloadState, matchesDeletedURL: deleteURL, originalURL: standardizedURL) {
+                onlineAlbumResults[albumIndex].downloadState = .idle
+            }
+        }
+        await persistLibrary()
+        statusMessage = cacheCleanupError == nil
+            ? "Deleted online download."
+            : "Deleted online download; cache metadata will be repaired on the next download."
     }
 
     private func deleteOnlineDownloadedAlbumFolder(_ folderURL: URL, tracks: [Track]) async {
         let standardizedURL = folderURL.standardizedFileURL
 
-        for track in tracks {
-            library.deleteTrack(id: track.id)
+        guard isInsideOnlineDownloads(standardizedURL) else {
+            statusMessage = "Refused to delete a folder outside Nightwing's download folder."
+            return
         }
 
         do {
             if FileManager.default.fileExists(atPath: standardizedURL.path) {
                 try FileManager.default.removeItem(at: standardizedURL)
             }
-            clearCompletedDownloadStates(matchingDeletedURL: standardizedURL, originalURL: standardizedURL)
-            for albumIndex in onlineAlbumResults.indices {
-                if completedDownloadState(onlineAlbumResults[albumIndex].downloadState, matchesDeletedURL: standardizedURL, originalURL: standardizedURL) {
-                    onlineAlbumResults[albumIndex].downloadState = .idle
-                }
-            }
-            Task {
-                await persistLibrary()
-            }
-            statusMessage = "Deleted online album download."
         } catch {
             statusMessage = "Could not delete online album download: \(error.localizedDescription)"
+            return
         }
+
+        removeTrackIDsFromLiveQueue(Set(tracks.map(\.id)))
+        for track in tracks {
+            library.deleteTrack(id: track.id)
+        }
+        clearCompletedDownloadStates(matchingDeletedURL: standardizedURL, originalURL: standardizedURL)
+        for albumIndex in onlineAlbumResults.indices {
+            if completedDownloadState(onlineAlbumResults[albumIndex].downloadState, matchesDeletedURL: standardizedURL, originalURL: standardizedURL) {
+                onlineAlbumResults[albumIndex].downloadState = .idle
+            }
+        }
+        await persistLibrary()
+        statusMessage = "Deleted online album download."
+    }
+
+    private func isInsideOnlineDownloads(_ url: URL) -> Bool {
+        let basePath = YtDlpDownloadService.downloadsBaseURL().standardizedFileURL.path
+        let candidatePath = url.standardizedFileURL.path
+        return candidatePath.hasPrefix(basePath + "/")
     }
 
     private func clearCompletedDownloadStates(matchingDeletedURL deletedURL: URL, originalURL: URL) {
@@ -779,24 +1230,34 @@ final class NightwingAppModel: ObservableObject {
             isImporting = false
         }
 
-        let items = MPMediaQuery.songs().items ?? []
-        let tracks = items.compactMap(systemMusicTrack)
-        guard !tracks.isEmpty else {
+        guard let items = MPMediaQuery.songs().items else {
             if showStatus {
-                statusMessage = "No locally playable iPhone Music songs were found."
+                statusMessage = "Could not read the iPhone Music library."
             }
             return
         }
+        let tracks = items.compactMap(systemMusicTrack)
+        let existingSystemTracks = library.tracks.filter(Self.isSystemMusicTrack)
+        let existingURLs = Set(existingSystemTracks.map { $0.fileURL.absoluteString })
+        let currentURLs = Set(tracks.map { $0.fileURL.absoluteString })
+        let staleTracks = existingSystemTracks.filter { !currentURLs.contains($0.fileURL.absoluteString) }
+        removeTrackIDsFromLiveQueue(Set(staleTracks.map(\.id)))
+        for track in staleTracks {
+            library.deleteTrack(id: track.id)
+        }
 
-        let previousCount = library.tracks.count
+        let importedCount = tracks.filter { !existingURLs.contains($0.fileURL.absoluteString) }.count
         library.upsertTracks(tracks)
-        let importedCount = max(library.tracks.count - previousCount, 0)
         await persistLibrary()
-        startPlaybackAnalysis()
+        if !tracks.isEmpty {
+            startPlaybackAnalysis()
+        }
 
         if showStatus {
             if importedCount > 0 {
                 statusMessage = "Imported \(importedCount) iPhone Music track\(importedCount == 1 ? "" : "s")."
+            } else if tracks.isEmpty {
+                statusMessage = "No locally playable iPhone Music songs were found."
             } else {
                 statusMessage = "iPhone Music library is up to date."
             }
@@ -856,6 +1317,10 @@ final class NightwingAppModel: ObservableObject {
             dateAdded: item.dateAdded,
             availability: .available
         )
+    }
+
+    private static func isSystemMusicTrack(_ track: Track) -> Bool {
+        track.fileURL.scheme?.lowercased() == "ipod-library"
     }
     #endif
 
@@ -919,11 +1384,12 @@ final class NightwingAppModel: ObservableObject {
         guard let track,
               lyricsDocumentsByTrackID[track.id] == nil,
               lyricsLoadTasks[track.id] == nil,
-              let cacheKey = track.lyricsMetadata?.cacheKey,
-              track.lyricsMetadata?.status == .ready,
               let lyricsStore else {
             return
         }
+
+        let sourceURL = playbackURL(for: track)
+        let cacheKey = track.lyricsMetadata?.cacheKey ?? lyricsCacheKey(for: track, sourceURL: sourceURL)
 
         lyricsLoadTasks[track.id] = Task { @MainActor [weak self] in
             defer {
@@ -931,9 +1397,50 @@ final class NightwingAppModel: ObservableObject {
             }
 
             do {
-                if let document = try await lyricsStore.load(cacheKey: cacheKey) {
-                    self?.lyricsDocumentsByTrackID[track.id] = document
+                if track.lyricsMetadata?.status == .ready,
+                   let document = try await lyricsStore.load(cacheKey: cacheKey) {
+                    if document.matchesSource(at: sourceURL) {
+                        self?.lyricsDocumentsByTrackID[track.id] = document
+                        return
+                    } else {
+                        try await lyricsStore.delete(cacheKey: cacheKey)
+                        self?.updateLyricsMetadata(
+                            trackID: track.id,
+                            metadata: LyricsMetadata(cacheKey: cacheKey, status: .none)
+                        )
+                        await self?.persistLibrary()
+                        self?.statusMessage = "Lyrics need to be regenerated because the audio changed."
+                    }
                 }
+
+                guard let canonical = try await self?.canonicalLyricsService.lyrics(for: track),
+                      case .synced(let lines) = canonical,
+                      !lines.isEmpty else { return }
+                let values = try? sourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                let document = LyricsDocument(
+                    trackID: track.id,
+                    trackTitle: track.title,
+                    artist: track.artist,
+                    album: track.album,
+                    sourceFilePath: sourceURL.standardizedFileURL.path,
+                    sourceFileSize: values?.fileSize.map(Int64.init),
+                    sourceModifiedAt: values?.contentModificationDate,
+                    modelName: "LRCLIB synced lyrics",
+                    transcriptionSpeed: 1,
+                    lines: lines
+                )
+                try await lyricsStore.save(document, cacheKey: cacheKey)
+                self?.lyricsDocumentsByTrackID[track.id] = document
+                self?.updateLyricsMetadata(
+                    trackID: track.id,
+                    metadata: LyricsMetadata(
+                        cacheKey: cacheKey,
+                        status: .ready,
+                        generatedAt: document.generatedAt,
+                        modelName: document.modelName
+                    )
+                )
+                await self?.persistLibrary()
             } catch {
                 self?.statusMessage = "Could not load lyrics: \(error.localizedDescription)"
             }
@@ -964,7 +1471,15 @@ final class NightwingAppModel: ObservableObject {
             }
 
             do {
-                let document = try await self.lyricsTranscriptionService.transcribe(track: track, sourceURL: sourceURL)
+                let document = try await self.lyricsTranscriptionService.transcribe(
+                    track: track,
+                    sourceURL: sourceURL
+                ) { progress in
+                    Task { @MainActor [weak self] in
+                        let percent = Int((progress * 100).rounded())
+                        self?.statusMessage = "Preparing transcription model... \(percent)%"
+                    }
+                }
                 try await lyricsStore.save(document, cacheKey: cacheKey)
                 self.lyricsDocumentsByTrackID[track.id] = document
                 self.updateLyricsMetadata(
@@ -978,6 +1493,8 @@ final class NightwingAppModel: ObservableObject {
                 )
                 await self.persistLibrary()
                 self.statusMessage = "Generated lyrics for \(track.title)."
+            } catch is CancellationError {
+                self.statusMessage = "Stopped lyrics generation for \(track.title)."
             } catch {
                 self.updateLyricsMetadata(
                     trackID: track.id,
@@ -993,6 +1510,10 @@ final class NightwingAppModel: ObservableObject {
                 self.statusMessage = "Could not generate lyrics: \(error.localizedDescription)"
             }
         }
+    }
+
+    func cancelLyricsGeneration(for track: Track) {
+        lyricsGenerationTasks[track.id]?.cancel()
     }
 
     func isCurrentTrack(_ track: Track) -> Bool {
@@ -1114,56 +1635,106 @@ final class NightwingAppModel: ObservableObject {
     }
 
     func refreshOpenedFolders() {
-        guard !library.folderSources.isEmpty else { return }
+        guard !library.folderSources.isEmpty, folderRefreshTask == nil else { return }
 
-        Task {
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.folderRefreshTask = nil }
+
             var importedCount = 0
             var didUpdateTracks = false
-            for folderSource in library.folderSources {
-                let folderURL = folderURL(for: folderSource)
+            var didRefreshSources = false
+            for folderSource in self.library.folderSources {
+                guard !Task.isCancelled else { return }
+                let folderURL = self.folderURL(for: folderSource)
                 guard FileManager.default.fileExists(atPath: folderURL.path) else { continue }
 
+                if let lastScannedDate = folderSource.lastScannedDate {
+                    let hasRelevantChanges = await Task.detached(priority: .utility) {
+                        Self.watchedFolderHasRelevantChanges(
+                            at: folderURL,
+                            since: lastScannedDate,
+                            recursive: folderSource.isRecursive
+                        )
+                    }.value
+                    guard hasRelevantChanges else { continue }
+                }
+
                 do {
-                    let (updatedSource, result) = try await importService.importFolder(
+                    let (updatedSource, result) = try await self.importService.importFolder(
                         at: folderURL,
                         recursive: folderSource.isRecursive
                     )
                     var sourceToStore = updatedSource
                     sourceToStore.id = folderSource.id
-                    library.upsertFolderSource(sourceToStore)
-                    let previousAlbumFingerprints = albumFingerprints(for: library.tracks)
-                    let previousArtworkFingerprints = artworkFingerprints(for: library.tracks)
-                    let previousTrackCount = library.tracks.count
-                    library.upsertTracks(result.tracks)
-                    if albumFingerprints(for: library.tracks) != previousAlbumFingerprints {
+                    self.library.upsertFolderSource(sourceToStore)
+                    didRefreshSources = true
+                    let previousAlbumFingerprints = self.albumFingerprints(for: self.library.tracks)
+                    let previousArtworkFingerprints = self.artworkFingerprints(for: self.library.tracks)
+                    let previousTrackCount = self.library.tracks.count
+                    self.library.upsertTracks(result.tracks)
+                    if self.albumFingerprints(for: self.library.tracks) != previousAlbumFingerprints {
                         didUpdateTracks = true
                     }
-                    if artworkFingerprints(for: library.tracks) != previousArtworkFingerprints {
+                    if self.artworkFingerprints(for: self.library.tracks) != previousArtworkFingerprints {
                         didUpdateTracks = true
                     }
-                    importedCount += max(library.tracks.count - previousTrackCount, 0)
+                    importedCount += max(self.library.tracks.count - previousTrackCount, 0)
                 } catch {
-                    statusMessage = "Could not refresh \(folderURL.lastPathComponent): \(error.localizedDescription)"
+                    self.statusMessage = "Could not refresh \(folderURL.lastPathComponent): \(error.localizedDescription)"
+                }
+            }
+
+            if didRefreshSources {
+                let previousAvailability = Dictionary(
+                    uniqueKeysWithValues: self.library.tracks.map { ($0.id, $0.availability) }
+                )
+                self.library.markMissingTracks()
+                if self.library.tracks.contains(where: { previousAvailability[$0.id] != $0.availability }) {
+                    didUpdateTracks = true
                 }
             }
 
             if importedCount > 0 {
-                statusMessage = "Added \(importedCount) new track\(importedCount == 1 ? "" : "s") from watched folders."
-                await persistLibrary()
-                startPlaybackAnalysis()
+                self.statusMessage = "Added \(importedCount) new track\(importedCount == 1 ? "" : "s") from watched folders."
+                await self.persistLibrary()
+                self.startPlaybackAnalysis()
             } else if didUpdateTracks {
-                statusMessage = "Updated album artwork from watched folders."
-                await persistLibrary()
+                self.statusMessage = "Updated watched folders."
+                await self.persistLibrary()
+            } else if didRefreshSources {
+                await self.persistLibrary()
             }
         }
+        folderRefreshTask = task
     }
 
     func play(_ track: Track) {
-        play(track, within: sortedTracks)
+        play(track, within: sortedTracks, preloadLookaheadCount: 1)
     }
 
     func play(_ track: Track, within tracks: [Track], preloadLookaheadCount: Int = 1) {
+        play(
+            track,
+            within: tracks,
+            preloadLookaheadCount: preloadLookaheadCount,
+            preservingOnlineQueueGeneration: nil
+        )
+    }
+
+    private func play(
+        _ track: Track,
+        within tracks: [Track],
+        preloadLookaheadCount: Int = 1,
+        preservingOnlineQueueGeneration generation: UUID?
+    ) {
         guard !tracks.isEmpty else { return }
+
+        #if os(macOS)
+        if generation == nil || onlineQueueGeneration != generation {
+            invalidateOnlineQueueGeneration()
+        }
+        #endif
 
         let index = tracks.firstIndex(where: { $0.id == track.id }) ?? 0
         let requestID = UUID()
@@ -1171,37 +1742,32 @@ final class NightwingAppModel: ObservableObject {
         playbackRequestID = requestID
         optimisticPlaybackTrackID = track.id
 
-        Task { @MainActor in
-            await Task.yield()
-            guard playbackRequestID == requestID else { return }
-
-            do {
-                let items = tracks.map {
-                    PlaybackQueueItem(
-                        trackID: $0.id,
-                        url: playbackURL(for: $0),
-                        title: $0.title,
-                        normalizationGain: $0.playbackNormalizationGain,
-                        playbackEndTime: $0.playbackEndTime,
-                        playbackAnalysisVersion: $0.playbackAnalysisVersion
-                    )
-                }
-                try player.replaceQueue(
-                    with: items,
-                    startingAt: index,
-                    autoplay: true,
-                    preloadLookaheadCount: preloadLookaheadCount
+        do {
+            let items = tracks.map {
+                PlaybackQueueItem(
+                    trackID: $0.id,
+                    url: playbackURL(for: $0),
+                    title: $0.title,
+                    normalizationGain: $0.playbackNormalizationGain,
+                    playbackEndTime: $0.playbackEndTime,
+                    playbackAnalysisVersion: $0.playbackAnalysisVersion
                 )
-                if playbackRequestID == requestID {
-                    optimisticPlaybackTrackID = nil
-                }
-                markPlayed(track)
-            } catch {
-                if playbackRequestID == requestID {
-                    optimisticPlaybackTrackID = nil
-                }
-                statusMessage = error.localizedDescription
             }
+            try player.replaceQueue(
+                with: items,
+                startingAt: index,
+                autoplay: true,
+                preloadLookaheadCount: preloadLookaheadCount
+            )
+            if playbackRequestID == requestID {
+                optimisticPlaybackTrackID = nil
+            }
+            markPlayed(track)
+        } catch {
+            if playbackRequestID == requestID {
+                optimisticPlaybackTrackID = nil
+            }
+            statusMessage = error.localizedDescription
         }
     }
 
@@ -1296,6 +1862,24 @@ final class NightwingAppModel: ObservableObject {
             playbackAnalysisVersion: track.playbackAnalysisVersion
         )
         statusMessage = "\(track.title) will play next."
+    }
+
+    private func removeTrackIDsFromLiveQueue(_ trackIDs: Set<Track.ID>) {
+        guard !trackIDs.isEmpty else { return }
+        let currentItemID = player.state.currentItem?.id
+        let itemIDs = player.state.queue.items
+            .filter { item in
+                guard let trackID = item.trackID else { return false }
+                return trackIDs.contains(trackID)
+            }
+            .map(\.id)
+
+        for itemID in itemIDs where itemID != currentItemID {
+            player.removeFromQueue(id: itemID)
+        }
+        if let currentItemID, itemIDs.contains(currentItemID) {
+            player.removeFromQueue(id: currentItemID)
+        }
     }
 
     func togglePlayback() {
@@ -1488,6 +2072,77 @@ final class NightwingAppModel: ObservableObject {
         }
 
         return folderSource.folderURL
+    }
+
+    nonisolated private static func watchedFolderHasRelevantChanges(
+        at folderURL: URL,
+        since lastScannedDate: Date,
+        recursive: Bool
+    ) -> Bool {
+        let didStartAccessing = folderURL.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                folderURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let resourceKeys: [URLResourceKey] = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .contentModificationDateKey,
+            .creationDateKey
+        ]
+
+        if let rootValues = try? folderURL.resourceValues(forKeys: Set(resourceKeys)),
+           rootValues.contentModificationDate.map({ $0 > lastScannedDate }) == true {
+            return true
+        }
+        let options: FileManager.DirectoryEnumerationOptions = recursive
+            ? [.skipsHiddenFiles]
+            : [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        guard let enumerator = FileManager.default.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: resourceKeys,
+            options: options
+        ) else {
+            return true
+        }
+
+        for case let candidateURL as URL in enumerator {
+            guard let values = try? candidateURL.resourceValues(forKeys: Set(resourceKeys)),
+                  values.isDirectory == true || values.isRegularFile == true else {
+                return true
+            }
+
+            if values.isDirectory == true,
+               values.contentModificationDate.map({ $0 > lastScannedDate }) == true {
+                return true
+            }
+
+            guard AudioFileType.isSupported(candidateURL) || isWatchedFolderArtwork(candidateURL) else {
+                continue
+            }
+
+            if values.contentModificationDate.map({ $0 > lastScannedDate }) == true ||
+                values.creationDate.map({ $0 > lastScannedDate }) == true {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    nonisolated private static func isWatchedFolderArtwork(_ fileURL: URL) -> Bool {
+        guard ["jpg", "jpeg", "png", "webp", "tif", "tiff"].contains(fileURL.pathExtension.lowercased()) else {
+            return false
+        }
+        let name = fileURL.deletingPathExtension().lastPathComponent.lowercased()
+        return ["cover", "folder", "front", "album", "artwork"].contains(name) ||
+            name.contains("cover") ||
+            name.contains("front") ||
+            name.contains("folder") ||
+            name.contains("sleeve") ||
+            name.contains("artwork")
     }
 
     private func startFolderRefreshTimer() {
@@ -1729,26 +2384,26 @@ func formattedSpeedAdjustedDuration(_ duration: TimeInterval?, playbackRate: Dou
 }
 
 enum NightwingTheme {
-    static let background = Color(red: 10 / 255, green: 18 / 255, blue: 33 / 255)
-    static let sidebar = Color(red: 8 / 255, green: 14 / 255, blue: 26 / 255)
-    static let panel = Color(red: 17 / 255, green: 28 / 255, blue: 47 / 255)
-    static let panelElevated = Color(red: 26 / 255, green: 42 / 255, blue: 68 / 255)
-    static let action = Color(red: 31 / 255, green: 214 / 255, blue: 255 / 255)
-    static let rowHover = Color(red: 31 / 255, green: 98 / 255, blue: 145 / 255).opacity(0.30)
-    static let divider = Color(red: 120 / 255, green: 198 / 255, blue: 255 / 255).opacity(0.20)
-    static let glassTint = Color(red: 31 / 255, green: 214 / 255, blue: 255 / 255).opacity(0.06)
-    static let glassElevatedTint = Color(red: 31 / 255, green: 214 / 255, blue: 255 / 255).opacity(0.11)
-    static let glassPressedTint = Color(red: 31 / 255, green: 214 / 255, blue: 255 / 255).opacity(0.17)
-    static let glassStroke = Color(red: 113 / 255, green: 220 / 255, blue: 255 / 255).opacity(0.28)
+    static let background = Color(red: 18 / 255, green: 18 / 255, blue: 18 / 255)
+    static let sidebar = Color(red: 14 / 255, green: 14 / 255, blue: 14 / 255)
+    static let panel = Color(red: 24 / 255, green: 24 / 255, blue: 24 / 255)
+    static let panelElevated = Color(red: 40 / 255, green: 40 / 255, blue: 40 / 255)
+    static let action = Color(red: 74 / 255, green: 144 / 255, blue: 255 / 255)
+    static let rowHover = Color.white.opacity(0.10)
+    static let divider = Color.white.opacity(0.12)
+    static let glassTint = Color.white.opacity(0.035)
+    static let glassElevatedTint = Color.white.opacity(0.075)
+    static let glassPressedTint = action.opacity(0.14)
+    static let glassStroke = Color.white.opacity(0.15)
     static let glassInnerStroke = Color.white.opacity(0.08)
     static let primaryText = Color.white
-    static let secondaryText = Color(red: 190 / 255, green: 207 / 255, blue: 221 / 255)
+    static let secondaryText = Color(red: 179 / 255, green: 179 / 255, blue: 179 / 255)
     static let warning = Color(red: 255 / 255, green: 170 / 255, blue: 56 / 255)
 
     static var appBackground: some View {
         LinearGradient(
             colors: [
-                Color(red: 15 / 255, green: 35 / 255, blue: 62 / 255),
+                Color(red: 31 / 255, green: 31 / 255, blue: 31 / 255),
                 background
             ],
             startPoint: .top,
@@ -2432,7 +3087,7 @@ struct MiniPlayerBar: View {
                 Image(systemName: "backward.fill")
                     .frame(width: 28, height: 28)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(NightwingTransportButtonStyle())
             .foregroundStyle(NightwingTheme.secondaryText)
             .accessibilityLabel("Previous")
 
@@ -2443,7 +3098,7 @@ struct MiniPlayerBar: View {
                     .font(.system(size: 32))
                     .frame(width: 36, height: 36)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(NightwingTransportButtonStyle(isPrimary: true))
             .foregroundStyle(NightwingTheme.primaryText)
             .accessibilityLabel(showsPauseState ? "Pause" : "Play")
 
@@ -2453,7 +3108,7 @@ struct MiniPlayerBar: View {
                 Image(systemName: "forward.fill")
                     .frame(width: 28, height: 28)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(NightwingTransportButtonStyle())
             .foregroundStyle(NightwingTheme.secondaryText)
             .accessibilityLabel("Next")
 
@@ -2604,6 +3259,25 @@ struct MiniPlayerBar: View {
     }
 }
 
+private struct NightwingTransportButtonStyle: ButtonStyle {
+    @State private var isHovering = false
+    var isPrimary = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : (isHovering ? 1.1 : 1))
+            .brightness(isHovering ? 0.18 : 0)
+            .background(
+                Circle()
+                    .fill(NightwingTheme.rowHover.opacity(isHovering && !isPrimary ? 1 : 0))
+            )
+            .contentShape(Circle())
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.14), value: isHovering)
+            .onHover { isHovering = $0 }
+    }
+}
+
 struct LyricsPanel: View {
     @EnvironmentObject private var appModel: NightwingAppModel
     @EnvironmentObject private var player: PlayerEngine
@@ -2658,11 +3332,14 @@ struct LyricsPanel: View {
             #if os(macOS)
             if let track {
                 Button {
-                    appModel.generateLyrics(for: track)
+                    if isGenerating {
+                        appModel.cancelLyricsGeneration(for: track)
+                    } else {
+                        appModel.generateLyrics(for: track)
+                    }
                 } label: {
                     if isGenerating {
-                        ProgressView()
-                            .controlSize(.small)
+                        Image(systemName: "xmark")
                             .frame(width: 18, height: 18)
                     } else {
                         Image(systemName: document == nil ? "waveform.badge.magnifyingglass" : "arrow.clockwise")
@@ -2670,9 +3347,8 @@ struct LyricsPanel: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .disabled(isGenerating)
-                .help(document == nil ? "Generate lyrics" : "Regenerate lyrics")
-                .accessibilityLabel(document == nil ? "Generate lyrics" : "Regenerate lyrics")
+                .help(isGenerating ? "Stop generating lyrics" : (document == nil ? "Generate lyrics" : "Regenerate lyrics"))
+                .accessibilityLabel(isGenerating ? "Stop generating lyrics" : (document == nil ? "Generate lyrics" : "Regenerate lyrics"))
             }
             #endif
         }
@@ -2683,13 +3359,19 @@ struct LyricsPanel: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(document.lines) { line in
-                        Text(line.text)
-                            .font(line.id == activeLineID ? .title3.weight(.bold) : .title3.weight(.semibold))
-                            .foregroundStyle(line.id == activeLineID ? NightwingTheme.primaryText : NightwingTheme.secondaryText)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .id(line.id)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            appModel.seek(to: line.startTime)
+                        } label: {
+                            Text(line.text)
+                                .font(line.id == activeLineID ? .title3.weight(.bold) : .title3.weight(.semibold))
+                                .foregroundStyle(line.id == activeLineID ? NightwingTheme.primaryText : NightwingTheme.secondaryText)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .id(line.id)
+                        .accessibilityHint("Seek to this lyric")
                     }
                 }
                 .padding(.vertical, 10)
@@ -2717,6 +3399,14 @@ struct LyricsPanel: View {
                 Text(track.lyricsMetadata?.status == .failed ? "Lyrics failed." : "No lyrics yet.")
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(NightwingTheme.secondaryText)
+
+                if let error = track.lyricsMetadata?.errorDescription,
+                   track.lyricsMetadata?.status == .failed {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(NightwingTheme.secondaryText)
+                        .textSelection(.enabled)
+                }
 
                 #if os(macOS)
                 Button {

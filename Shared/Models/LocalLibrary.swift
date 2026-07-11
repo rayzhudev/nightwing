@@ -56,37 +56,91 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
 
     public mutating func upsertTrack(_ track: Track) {
         if let index = tracks.firstIndex(where: { $0.id == track.id || $0.fileURL == track.fileURL }) {
-            var updatedTrack = track
-            updatedTrack.id = tracks[index].id
-            updatedTrack.dateAdded = tracks[index].dateAdded
-            updatedTrack.lastPlayedDate = tracks[index].lastPlayedDate
-            updatedTrack.playCount = tracks[index].playCount
-            if updatedTrack.playbackNormalizationGain == nil {
-                updatedTrack.playbackNormalizationGain = tracks[index].playbackNormalizationGain
-            }
-            if updatedTrack.playbackEndTime == nil {
-                updatedTrack.playbackEndTime = tracks[index].playbackEndTime
-            }
-            if updatedTrack.playbackAnalysisVersion == nil {
-                updatedTrack.playbackAnalysisVersion = tracks[index].playbackAnalysisVersion
-            }
-            if updatedTrack.lyricsMetadata == nil {
-                updatedTrack.lyricsMetadata = tracks[index].lyricsMetadata
-            }
-            tracks[index] = updatedTrack
+            tracks[index] = Self.merging(track, preserving: tracks[index])
         } else {
             tracks.append(track)
         }
     }
 
     public mutating func upsertTracks(_ newTracks: [Track]) {
-        for track in newTracks {
-            upsertTrack(track)
+        guard !newTracks.isEmpty else { return }
+
+        var indicesByID: [Track.ID: Int] = [:]
+        var indicesByURL: [URL: Int] = [:]
+        indicesByID.reserveCapacity(tracks.count + newTracks.count)
+        indicesByURL.reserveCapacity(tracks.count + newTracks.count)
+
+        for index in tracks.indices {
+            if indicesByID[tracks[index].id] == nil {
+                indicesByID[tracks[index].id] = index
+            }
+            if indicesByURL[tracks[index].fileURL] == nil {
+                indicesByURL[tracks[index].fileURL] = index
+            }
         }
+
+        for track in newTracks {
+            let matchingIndex = [indicesByID[track.id], indicesByURL[track.fileURL]]
+                .compactMap { $0 }
+                .min()
+
+            if let index = matchingIndex {
+                let previousURL = tracks[index].fileURL
+                let updatedTrack = Self.merging(track, preserving: tracks[index])
+                tracks[index] = updatedTrack
+
+                if previousURL != updatedTrack.fileURL,
+                   indicesByURL[previousURL] == index {
+                    indicesByURL[previousURL] = nil
+                }
+                if let existingIndex = indicesByURL[updatedTrack.fileURL] {
+                    indicesByURL[updatedTrack.fileURL] = min(existingIndex, index)
+                } else {
+                    indicesByURL[updatedTrack.fileURL] = index
+                }
+                if let existingIndex = indicesByID[updatedTrack.id] {
+                    indicesByID[updatedTrack.id] = min(existingIndex, index)
+                } else {
+                    indicesByID[updatedTrack.id] = index
+                }
+            } else {
+                let index = tracks.endIndex
+                tracks.append(track)
+                indicesByID[track.id] = index
+                indicesByURL[track.fileURL] = index
+            }
+        }
+    }
+
+    private static func merging(_ track: Track, preserving existingTrack: Track) -> Track {
+        var updatedTrack = track
+        updatedTrack.id = existingTrack.id
+        updatedTrack.dateAdded = existingTrack.dateAdded
+        updatedTrack.lastPlayedDate = existingTrack.lastPlayedDate
+        updatedTrack.playCount = existingTrack.playCount
+        if updatedTrack.playbackNormalizationGain == nil {
+            updatedTrack.playbackNormalizationGain = existingTrack.playbackNormalizationGain
+        }
+        if updatedTrack.playbackEndTime == nil {
+            updatedTrack.playbackEndTime = existingTrack.playbackEndTime
+        }
+        if updatedTrack.playbackAnalysisVersion == nil {
+            updatedTrack.playbackAnalysisVersion = existingTrack.playbackAnalysisVersion
+        }
+        if updatedTrack.lyricsMetadata == nil {
+            updatedTrack.lyricsMetadata = existingTrack.lyricsMetadata
+        }
+        return updatedTrack
     }
 
     public mutating func deleteTrack(id trackID: Track.ID) {
         tracks.removeAll { $0.id == trackID }
+        let queuedItemIDs = queue.items
+            .filter { $0.trackID == trackID }
+            .map(\.id)
+        for itemID in queuedItemIDs {
+            _ = queue.remove(id: itemID)
+        }
         for index in playlists.indices {
             playlists[index].items.removeAll { $0.trackID == trackID }
             playlists[index].dateModified = Date()
@@ -149,13 +203,63 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
     }
 
     public mutating func markMissingTracks(fileManager: FileManager = .default) {
+        var resolvedTrackURLsByID: [Track.ID: URL] = [:]
+        resolvedTrackURLsByID.reserveCapacity(tracks.count)
+
         for index in tracks.indices {
+            if let bookmarkData = tracks[index].bookmarkData,
+               let resolution = Self.availableBookmarkResolution(
+                bookmarkData,
+                fileManager: fileManager
+               ) {
+                tracks[index].fileURL = resolution.url
+                resolvedTrackURLsByID[tracks[index].id] = resolution.url
+                if let refreshedBookmarkData = resolution.refreshedBookmarkData {
+                    tracks[index].bookmarkData = refreshedBookmarkData
+                }
+                tracks[index].availability = .available
+                continue
+            }
+
             guard tracks[index].fileURL.isFileURL else {
                 tracks[index].availability = .available
                 continue
             }
             tracks[index].availability = fileManager.fileExists(atPath: tracks[index].fileURL.path) ? .available : .missing
         }
+
+        queue.remapTrackURLs(resolvedTrackURLsByID)
+    }
+
+    private static func availableBookmarkResolution(
+        _ bookmarkData: Data,
+        fileManager: FileManager
+    ) -> (url: URL, refreshedBookmarkData: Data?)? {
+        var isStale = false
+        guard let resolvedURL = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: [],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ), resolvedURL.isFileURL else {
+            return nil
+        }
+
+        let didStartAccessing = resolvedURL.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                resolvedURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard fileManager.fileExists(atPath: resolvedURL.path) else {
+            return nil
+        }
+
+        let refreshedBookmarkData = isStale
+            ? try? resolvedURL.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+            : nil
+        return (resolvedURL, refreshedBookmarkData)
     }
 
 }

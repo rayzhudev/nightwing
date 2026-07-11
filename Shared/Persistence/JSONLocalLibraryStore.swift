@@ -52,13 +52,7 @@ public actor JSONLocalLibraryStore {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
         let data = try encoder.encode(library)
-        let temporaryURL = directoryURL.appendingPathComponent(".\(fileURL.lastPathComponent).tmp")
-        try data.write(to: temporaryURL, options: [.atomic])
-
-        if fileManager.fileExists(atPath: fileURL.path) {
-            try fileManager.removeItem(at: fileURL)
-        }
-        try fileManager.moveItem(at: temporaryURL, to: fileURL)
+        try data.write(to: fileURL, options: [.atomic])
     }
 
     public func update(_ transform: (inout LocalLibrary) throws -> Void) throws -> LocalLibrary {

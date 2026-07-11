@@ -24,6 +24,7 @@ public final class PlayerEngine: ObservableObject {
     private static let maximumPreloadedItems = 40
 
     private var audioFile: AVAudioFile?
+    private var securityScopedPlaybackURL: URL?
     private var loadedFramePosition: AVAudioFramePosition = 0
     private var scheduledStartFrame: AVAudioFramePosition = 0
     private var playbackEndFrame: AVAudioFramePosition = 0
@@ -58,6 +59,7 @@ public final class PlayerEngine: ObservableObject {
         preloadTask?.cancel()
         playerNode.stop()
         engine.stop()
+        securityScopedPlaybackURL?.stopAccessingSecurityScopedResource()
     }
 
     public func replaceQueue(
@@ -414,10 +416,16 @@ public final class PlayerEngine: ObservableObject {
         let preparedItem = preparedItems[item.id]?.matches(item) == true ? preparedItems[item.id] : nil
         beginLoading(item)
 
+        if item.url.startAccessingSecurityScopedResource() {
+            securityScopedPlaybackURL = item.url
+        }
+
         guard !item.url.isFileURL || FileManager.default.fileExists(atPath: item.url.path) else {
+            stopAccessingPlaybackResource()
             throw fail(.fileDoesNotExist(item.url))
         }
 
+        var didLoadAudioFile = false
         do {
             let file = try preparedItem?.file ?? AVAudioFile(forReading: item.url)
             audioFile = file
@@ -429,11 +437,16 @@ public final class PlayerEngine: ObservableObject {
             schedule(from: 0)
             preloadNextItemIfNeeded()
             state.status = .ready
+            didLoadAudioFile = true
 
             if autoplay {
                 try play()
             }
         } catch {
+            if !didLoadAudioFile {
+                audioFile = nil
+                stopAccessingPlaybackResource()
+            }
             throw fail(.failedToReadFile(error.localizedDescription))
         }
     }
@@ -445,6 +458,7 @@ public final class PlayerEngine: ObservableObject {
         cancelPreloadTask()
         playerNode.stop()
         audioFile = nil
+        stopAccessingPlaybackResource()
         loadedFramePosition = 0
         scheduledStartFrame = 0
         playbackEndFrame = 0
@@ -458,6 +472,7 @@ public final class PlayerEngine: ObservableObject {
     private func unload() {
         stop()
         audioFile = nil
+        stopAccessingPlaybackResource()
         playbackEndFrame = 0
         clearPreloadCache()
         state.currentItem = nil
@@ -567,8 +582,7 @@ public final class PlayerEngine: ObservableObject {
         prunePreparedItems(keeping: candidates)
 
         let itemsToPrepare = candidates.filter { item in
-            FileManager.default.fileExists(atPath: item.url.path) &&
-                preparedItems[item.id]?.matches(item) != true
+            preparedItems[item.id]?.matches(item) != true
         }
 
         guard !itemsToPrepare.isEmpty else {
@@ -581,6 +595,15 @@ public final class PlayerEngine: ObservableObject {
         preloadTask = Task.detached(priority: .utility) { [weak self] in
             for item in itemsToPrepare {
                 guard !Task.isCancelled else { return }
+                let didStartAccessing = item.url.startAccessingSecurityScopedResource()
+                defer {
+                    if didStartAccessing {
+                        item.url.stopAccessingSecurityScopedResource()
+                    }
+                }
+                guard !item.url.isFileURL || FileManager.default.fileExists(atPath: item.url.path) else {
+                    continue
+                }
                 guard let file = try? AVAudioFile(forReading: item.url) else { continue }
 
                 let preparedItem = PreparedPlaybackItem(
@@ -665,6 +688,12 @@ public final class PlayerEngine: ObservableObject {
         cancelPreloadTask()
         preparedItems.removeAll()
         preparedItemOrder.removeAll()
+    }
+
+    private func stopAccessingPlaybackResource() {
+        guard let securityScopedPlaybackURL else { return }
+        securityScopedPlaybackURL.stopAccessingSecurityScopedResource()
+        self.securityScopedPlaybackURL = nil
     }
 
     private static func clampedPreloadLookaheadCount(_ count: Int) -> Int {
@@ -891,7 +920,14 @@ public actor PlaybackNormalizationAnalyzer {
     private static let trailingSilencePeak: Float = 0.001 // -60 dBFS
     private static let yieldAfterBufferCount = 8
 
+    private struct InFlightAnalysis {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: CheckedContinuation<PlaybackAnalysis?, Never>]
+    }
+
     private var cache: [String: PlaybackAnalysis] = [:]
+    private var inFlightAnalyses: [String: InFlightAnalysis] = [:]
 
     public func normalization(for url: URL) async -> PlaybackNormalization {
         let analysis = await analysis(for: url)
@@ -899,24 +935,120 @@ public actor PlaybackNormalizationAnalyzer {
     }
 
     public func analysis(for url: URL) async -> PlaybackAnalysis {
+        let didStartAccessing = url.startAccessingSecurityScopedResource()
         let key = cacheKey(for: url)
+        if didStartAccessing {
+            url.stopAccessingSecurityScopedResource()
+        }
+
         if let cached = cache[key] {
             return cached
         }
 
+        let waiterID = UUID()
+        let analysis: PlaybackAnalysis? = await withTaskCancellationHandler {
+            guard !Task.isCancelled else { return nil }
+
+            return await withCheckedContinuation { continuation in
+                if var inFlightAnalysis = inFlightAnalyses[key] {
+                    inFlightAnalysis.waiters[waiterID] = continuation
+                    inFlightAnalyses[key] = inFlightAnalysis
+                    return
+                }
+
+                let analysisID = UUID()
+                let analysisTask = Task { [url] in
+                    let analysis = await self.uncachedAnalysis(for: url)
+                    self.finishAnalysis(analysis, key: key, analysisID: analysisID)
+                }
+                inFlightAnalyses[key] = InFlightAnalysis(
+                    id: analysisID,
+                    task: analysisTask,
+                    waiters: [waiterID: continuation]
+                )
+            }
+        } onCancel: {
+            Task {
+                await self.cancelWaiter(waiterID, key: key)
+            }
+        }
+
+        // Callers use cancellation to discard obsolete track work. Returning a
+        // neutral value keeps this nonthrowing API source-compatible; canceled
+        // and partial scans are never inserted into the cache.
+        return analysis ?? PlaybackAnalysis(normalization: .neutral, playbackEndTime: nil)
+    }
+
+    private nonisolated func uncachedAnalysis(for url: URL) async -> PlaybackAnalysis? {
+        guard !Task.isCancelled else { return nil }
+
+        let didStartAccessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
         let taggedNormalization = await taggedNormalization(for: url)
+        guard !Task.isCancelled else { return nil }
+
         let scannedAnalysis = await scannedAnalysis(for: url)
-        let analysis = PlaybackAnalysis(
+        guard !Task.isCancelled else { return nil }
+
+        return PlaybackAnalysis(
             normalization: taggedNormalization ?? scannedAnalysis?.normalization ?? .neutral,
             playbackEndTime: scannedAnalysis?.playbackEndTime
         )
-        cache[key] = analysis
-        return analysis
     }
 
-    private func taggedNormalization(for url: URL) async -> PlaybackNormalization? {
+    private func finishAnalysis(
+        _ analysis: PlaybackAnalysis?,
+        key: String,
+        analysisID: UUID
+    ) {
+        guard let inFlightAnalysis = inFlightAnalyses[key],
+              inFlightAnalysis.id == analysisID else {
+            return
+        }
+
+        inFlightAnalyses[key] = nil
+        if let analysis, !Task.isCancelled {
+            cache[key] = analysis
+            for continuation in inFlightAnalysis.waiters.values {
+                continuation.resume(returning: analysis)
+            }
+        } else {
+            for continuation in inFlightAnalysis.waiters.values {
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    private func cancelWaiter(_ waiterID: UUID, key: String) {
+        guard var inFlightAnalysis = inFlightAnalyses[key],
+              let continuation = inFlightAnalysis.waiters.removeValue(forKey: waiterID) else {
+            return
+        }
+
+        continuation.resume(returning: nil)
+        if inFlightAnalysis.waiters.isEmpty {
+            inFlightAnalyses[key] = nil
+            inFlightAnalysis.task.cancel()
+        } else {
+            inFlightAnalyses[key] = inFlightAnalysis
+        }
+    }
+
+    private nonisolated func taggedNormalization(for url: URL) async -> PlaybackNormalization? {
+        guard !Task.isCancelled else { return nil }
+
         let asset = AVURLAsset(url: url)
-        let metadata = ((try? await asset.load(.commonMetadata)) ?? []) + ((try? await asset.load(.metadata)) ?? [])
+        let commonMetadata = (try? await asset.load(.commonMetadata)) ?? []
+        guard !Task.isCancelled else { return nil }
+
+        let metadata = commonMetadata + ((try? await asset.load(.metadata)) ?? [])
+        guard !Task.isCancelled else { return nil }
+
         guard let gainDecibels = await metadataNumber(
             in: metadata,
             matching: ["replaygaintrackgain", "replaygainalbumgain"]
@@ -933,7 +1065,8 @@ public actor PlaybackNormalizationAnalyzer {
         return PlaybackNormalization(linearGain: gain)
     }
 
-    private func scannedAnalysis(for url: URL) async -> PlaybackAnalysis? {
+    private nonisolated func scannedAnalysis(for url: URL) async -> PlaybackAnalysis? {
+        guard !Task.isCancelled else { return nil }
         guard let file = try? AVAudioFile(forReading: url) else { return nil }
         let format = file.processingFormat
         guard format.sampleRate > 0, file.length > 0 else { return nil }
@@ -986,7 +1119,9 @@ public actor PlaybackNormalizationAnalyzer {
             }
         }
 
-        while !Task.isCancelled {
+        while true {
+            guard !Task.isCancelled else { return nil }
+
             do {
                 try file.read(into: buffer, frameCount: buffer.frameCapacity)
             } catch {
@@ -1000,6 +1135,10 @@ public actor PlaybackNormalizationAnalyzer {
             if format.isInterleaved {
                 let samples = channelData[0]
                 for frame in 0..<frameLength {
+                    if frame.isMultiple(of: 4_096), Task.isCancelled {
+                        return nil
+                    }
+
                     var frameSumSquares = 0.0
                     var framePeak: Float = 0
                     let sampleBaseIndex = frame * channelCount
@@ -1017,6 +1156,10 @@ public actor PlaybackNormalizationAnalyzer {
                 }
             } else {
                 for frame in 0..<frameLength {
+                    if frame.isMultiple(of: 4_096), Task.isCancelled {
+                        return nil
+                    }
+
                     var frameSumSquares = 0.0
                     var framePeak: Float = 0
 
@@ -1040,6 +1183,7 @@ public actor PlaybackNormalizationAnalyzer {
             }
         }
 
+        guard !Task.isCancelled else { return nil }
         finishSilenceWindow()
 
         guard sampleCount > 0 else { return nil }
@@ -1091,8 +1235,13 @@ public actor PlaybackNormalizationAnalyzer {
         return endTime.isFinite && endTime > 0 ? endTime : nil
     }
 
-    private func metadataNumber(in metadata: [AVMetadataItem], matching tokens: [String]) async -> Double? {
+    private nonisolated func metadataNumber(
+        in metadata: [AVMetadataItem],
+        matching tokens: [String]
+    ) async -> Double? {
         for item in metadata {
+            guard !Task.isCancelled else { return nil }
+
             let key = normalizedMetadataKey(for: item)
             guard tokens.contains(where: { key.contains($0) }) else { continue }
 
@@ -1109,7 +1258,7 @@ public actor PlaybackNormalizationAnalyzer {
         return nil
     }
 
-    private func normalizedMetadataKey(for item: AVMetadataItem) -> String {
+    private nonisolated func normalizedMetadataKey(for item: AVMetadataItem) -> String {
         [
             item.commonKey?.rawValue,
             item.identifier?.rawValue,

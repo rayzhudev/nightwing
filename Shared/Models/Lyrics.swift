@@ -97,4 +97,15 @@ public struct LyricsDocument: Codable, Equatable, Sendable {
 
         return lines.lastIndex(where: { $0.startTime <= time })
     }
+
+    public func matchesSource(at url: URL) -> Bool {
+        guard sourceFilePath == url.standardizedFileURL.path else { return false }
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else {
+            return false
+        }
+        if let sourceFileSize, Int64(values.fileSize ?? -1) != sourceFileSize { return false }
+        if let sourceModifiedAt, let currentDate = values.contentModificationDate,
+           abs(currentDate.timeIntervalSince(sourceModifiedAt)) > 1 { return false }
+        return true
+    }
 }

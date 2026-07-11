@@ -6,10 +6,17 @@ import Darwin
 import os
 #endif
 
+private struct InFlightAlbumDownload {
+    let token: UUID
+    let task: Task<URL, Error>
+    let stagingDirectory: URL
+}
+
 actor YtDlpDownloadService {
     private static let chromeUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     private static let maxSearchCacheEntries = 24
     private static let downloadRetryDelaysNanoseconds: [UInt64] = [0, 700_000_000, 1_800_000_000]
+    private static let albumPreviewTimeoutNanoseconds: UInt64 = 20_000_000_000
     private static let youTubeMusicClientContextCache = YouTubeMusicClientContextCache()
     private let store = OnlineTrackStore()
     #if canImport(os)
@@ -18,7 +25,7 @@ actor YtDlpDownloadService {
     private let maxConcurrentDownloads = 2
     private var activeDownloads = 0
     private var inFlightTrackDownloads: [String: Task<URL, Error>] = [:]
-    private var inFlightAlbumDownloads: [String: Task<URL, Error>] = [:]
+    private var inFlightAlbumDownloads: [String: InFlightAlbumDownload] = [:]
     private var trackSearchCache: [String: [OnlineSearchResult]] = [:]
     private var albumSearchCache: [String: [OnlineAlbumSearchResult]] = [:]
     private var trackSearchCacheOrder: [String] = []
@@ -32,7 +39,17 @@ actor YtDlpDownloadService {
             return cachedResults
         }
 
-        let musicCandidates = try await Self.fetchYouTubeMusicCandidates(query: trimmedQuery)
+        let musicCandidates: [YouTubeSearchCandidate]
+        do {
+            musicCandidates = try await Self.fetchYouTubeMusicCandidates(query: trimmedQuery)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            #if canImport(os)
+            logger.info("YouTube Music song search failed; using YouTube fallback: \(error.localizedDescription, privacy: .public)")
+            #endif
+            musicCandidates = []
+        }
         if !musicCandidates.isEmpty {
             let results = Self.rankedResults(from: musicCandidates, query: trimmedQuery)
             cacheTrackSearchResults(results, for: cacheKey)
@@ -56,7 +73,17 @@ actor YtDlpDownloadService {
             return cachedResults
         }
 
-        let musicAlbums = try await Self.fetchYouTubeMusicAlbumCandidates(query: trimmedQuery)
+        let musicAlbums: [YouTubeAlbumCandidate]
+        do {
+            musicAlbums = try await Self.fetchYouTubeMusicAlbumCandidates(query: trimmedQuery)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            #if canImport(os)
+            logger.info("YouTube Music album search failed; using YouTube fallback: \(error.localizedDescription, privacy: .public)")
+            #endif
+            musicAlbums = []
+        }
         if !musicAlbums.isEmpty {
             let results = Self.rankedAlbumResults(from: musicAlbums, query: trimmedQuery)
             cacheAlbumSearchResults(results, for: cacheKey)
@@ -96,6 +123,20 @@ actor YtDlpDownloadService {
         while activeDownloads >= maxConcurrentDownloads {
             try await Task.sleep(nanoseconds: 250_000_000)
         }
+
+        // Another request for the same source may have started or completed
+        // while this one was waiting for a download slot.
+        if let cached = try resolveCachedTrack(sourceHash: sourceHash),
+           FileManager.default.fileExists(atPath: cached.localFileURL) {
+            progressHandler?(1)
+            return URL(fileURLWithPath: cached.localFileURL)
+        }
+        if let inFlightDownload = inFlightTrackDownloads[sourceHash] {
+            let fileURL = try await inFlightDownload.value
+            progressHandler?(1)
+            return fileURL
+        }
+
         activeDownloads += 1
         defer {
             activeDownloads -= 1
@@ -168,7 +209,7 @@ actor YtDlpDownloadService {
         }
 
         if let inFlightDownload = inFlightAlbumDownloads[sourceHash] {
-            let folderURL = try await inFlightDownload.value
+            let folderURL = try await inFlightDownload.task.value
             progressHandler?(1)
             return folderURL
         }
@@ -176,26 +217,124 @@ actor YtDlpDownloadService {
         while activeDownloads >= maxConcurrentDownloads {
             try await Task.sleep(nanoseconds: 250_000_000)
         }
+
+        if let existingAlbumDir = Self.existingUsableAlbumDirectory(at: albumDir) {
+            progressHandler?(1)
+            return existingAlbumDir
+        }
+        if let inFlightDownload = inFlightAlbumDownloads[sourceHash] {
+            let folderURL = try await inFlightDownload.task.value
+            progressHandler?(1)
+            return folderURL
+        }
+
         activeDownloads += 1
+        let token = UUID()
+        let stagingDirectory = Self.temporaryAlbumDirectory(sourceHash: sourceHash)
         defer {
             activeDownloads -= 1
-            inFlightAlbumDownloads[sourceHash] = nil
+            if inFlightAlbumDownloads[sourceHash]?.token == token {
+                inFlightAlbumDownloads[sourceHash] = nil
+            }
+            try? FileManager.default.removeItem(at: stagingDirectory)
         }
 
         let downloadTask = Task {
             try await Self.downloadAlbumWithRetries(
                 executables: ytDlpPaths,
                 album: album,
-                sourceHash: sourceHash,
+                stagingDirectory: stagingDirectory,
                 finalDirectory: albumDir,
                 progressHandler: progressHandler
             )
         }
-        inFlightAlbumDownloads[sourceHash] = downloadTask
+        inFlightAlbumDownloads[sourceHash] = InFlightAlbumDownload(
+            token: token,
+            task: downloadTask,
+            stagingDirectory: stagingDirectory
+        )
 
         let folderURL = try await downloadTask.value
         progressHandler?(1)
         return folderURL
+    }
+
+    /// Stops an active album download and removes its incomplete staging files.
+    /// The final album directory is never removed, so an already completed
+    /// download remains available in the library.
+    func cancelAlbumDownload(_ album: OnlineAlbumSearchResult) {
+        let sourceHash = OnlineTrackStore.hashKey(for: album.sourceURL)
+        guard let inFlightDownload = inFlightAlbumDownloads[sourceHash] else { return }
+        inFlightDownload.task.cancel()
+        try? FileManager.default.removeItem(at: inFlightDownload.stagingDirectory)
+    }
+
+    /// Returns related tracks suitable for extending a queue that was started
+    /// from a single online result. Results never include the seed track.
+    func suggestedTracks(after seed: OnlineSearchResult, limit: Int = 12) async throws -> [OnlineSearchResult] {
+        let query = seed.artist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !query.isEmpty, limit > 0 else { return [] }
+        let seedHash = OnlineTrackStore.hashKey(for: seed.sourceURL)
+        return try await search(query: query)
+            .filter { OnlineTrackStore.hashKey(for: $0.sourceURL) != seedHash }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    /// Loads a lightweight album track listing without downloading audio.
+    /// `yt-dlp --flat-playlist` works for both regular YouTube playlists and
+    /// YouTube Music album playlist IDs, giving the UI a browsable preview.
+    func albumTracks(for album: OnlineAlbumSearchResult) async throws -> [OnlineSearchResult] {
+        let executables = Self.locateYtDlpCandidates()
+        guard !executables.isEmpty else {
+            throw YtDlpError.notFound
+        }
+
+        var output: String?
+        var lastError: Error?
+        for executable in executables {
+            do {
+                output = try await Self.runCommand(
+                    executable: executable,
+                    arguments: ["--ignore-config", "--flat-playlist", "--dump-single-json", "--no-warnings", album.sourceURL.absoluteString],
+                    timeoutNanoseconds: Self.albumPreviewTimeoutNanoseconds
+                )
+                break
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+            }
+        }
+
+        guard let output else {
+            throw lastError ?? YtDlpError.commandFailed("The album track list could not be read.")
+        }
+        guard let data = output.data(using: .utf8),
+              let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = payload["entries"] as? [[String: Any]] else {
+            throw YtDlpError.commandFailed("The album track list could not be read.")
+        }
+
+        return entries.compactMap { entry in
+            guard let videoID = entry["id"] as? String,
+                  !videoID.isEmpty else { return nil }
+            let rawTitle = (entry["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = rawTitle?.isEmpty == false ? rawTitle! : "Unknown Track"
+            let artist = (entry["artist"] as? String)
+                ?? (entry["uploader"] as? String)
+                ?? album.artist
+            let duration = (entry["duration"] as? NSNumber)?.doubleValue
+            let thumbnail = (entry["thumbnail"] as? String).flatMap(URL.init(string:)) ?? album.thumbnailURL
+            return OnlineSearchResult(
+                id: videoID,
+                title: title,
+                artist: artist,
+                duration: duration,
+                sourceURL: URL(string: "https://www.youtube.com/watch?v=\(videoID)")!,
+                thumbnailURL: thumbnail
+            )
+        }
     }
 
     func existingAlbumDirectory(for album: OnlineAlbumSearchResult) -> URL? {
@@ -454,6 +593,7 @@ actor YtDlpDownloadService {
 
     private static func directAudioDownloadArguments(format: String, outputTemplate: String, sourceURL: URL) -> [String] {
         [
+            "--ignore-config",
             "--newline",
             "--no-playlist",
             "--no-mtime",
@@ -468,6 +608,7 @@ actor YtDlpDownloadService {
 
     private static func extractedAudioDownloadArguments(extensionName: String, outputTemplate: String, sourceURL: URL) -> [String] {
         [
+            "--ignore-config",
             "--newline",
             "--no-playlist",
             "--no-mtime",
@@ -485,6 +626,7 @@ actor YtDlpDownloadService {
 
     private static func albumDownloadArguments(outputTemplate: String, sourceURL: URL) -> [String] {
         [
+            "--ignore-config",
             "--newline",
             "--yes-playlist",
             "--ignore-errors",
@@ -524,6 +666,9 @@ actor YtDlpDownloadService {
                         progressHandler: progressHandler
                     )
                 } catch {
+                    if error is CancellationError || Task.isCancelled {
+                        throw CancellationError()
+                    }
                     lastError = error
 
                     #if canImport(os)
@@ -539,6 +684,9 @@ actor YtDlpDownloadService {
                         progressHandler: progressHandler
                     )
                 } catch {
+                    if error is CancellationError || Task.isCancelled {
+                        throw CancellationError()
+                    }
                     lastError = error
 
                     #if canImport(os)
@@ -554,7 +702,7 @@ actor YtDlpDownloadService {
     private static func downloadAlbumWithRetries(
         executables: [String],
         album: OnlineAlbumSearchResult,
-        sourceHash: String,
+        stagingDirectory: URL,
         finalDirectory: URL,
         progressHandler: (@Sendable (Double) -> Void)?
     ) async throws -> URL {
@@ -565,8 +713,8 @@ actor YtDlpDownloadService {
                 try await Task.sleep(nanoseconds: delay)
             }
 
-            let stagingDirectory = temporaryAlbumDirectory(sourceHash: sourceHash)
             for executable in executables {
+                try? FileManager.default.removeItem(at: stagingDirectory)
                 do {
                     let folderURL = try await downloadAlbumOnce(
                         executable: executable,
@@ -577,6 +725,10 @@ actor YtDlpDownloadService {
                     )
                     return folderURL
                 } catch {
+                    if error is CancellationError || Task.isCancelled {
+                        try? FileManager.default.removeItem(at: stagingDirectory)
+                        throw CancellationError()
+                    }
                     lastError = error
                     try? FileManager.default.removeItem(at: stagingDirectory)
 
@@ -611,6 +763,9 @@ actor YtDlpDownloadService {
                 progressHandler: progressHandler
             )
         } catch {
+            if error is CancellationError || Task.isCancelled {
+                throw CancellationError()
+            }
             let partialAudioFiles = (try? audioFileURLs(in: stagingDirectory)) ?? []
             guard !partialAudioFiles.isEmpty else {
                 throw error
@@ -632,48 +787,15 @@ actor YtDlpDownloadService {
         expectedFileURL: URL,
         progressHandler: (@Sendable (Double) -> Void)?
     ) async throws -> URL {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        var progressEmitter = ProgressEmitter()
+        let execution = try await executeProcess(
+            executable: executable,
+            arguments: arguments,
+            aggregatesPlaylistProgress: false,
+            progressHandler: progressHandler
+        )
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-        } catch {
-            throw YtDlpError.launchFailed(error.localizedDescription)
-        }
-
-        var output = ""
-        while process.isRunning {
-            let data = pipe.fileHandleForReading.availableData
-            guard !data.isEmpty else {
-                try await Task.sleep(nanoseconds: 100_000_000)
-                continue
-            }
-            let text = String(decoding: data, as: UTF8.self)
-            output.append(text)
-            if let progress = Self.progressPercent(from: text) {
-                progressEmitter.emit(progress, to: progressHandler)
-            }
-        }
-
-        let remainingData = pipe.fileHandleForReading.readDataToEndOfFile()
-        if !remainingData.isEmpty {
-            let text = String(decoding: remainingData, as: UTF8.self)
-            output.append(text)
-            if let progress = Self.progressPercent(from: text) {
-                progressEmitter.emit(progress, to: progressHandler, force: true)
-            }
-        }
-
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            throw YtDlpError.downloadFailed(diagnosticMessage(from: output))
+        guard execution.terminationStatus == 0 else {
+            throw YtDlpError.downloadFailed(diagnosticMessage(from: execution.output))
         }
 
         if FileManager.default.fileExists(atPath: expectedFileURL.path) {
@@ -696,10 +818,51 @@ actor YtDlpDownloadService {
         arguments: [String],
         progressHandler: (@Sendable (Double) -> Void)?
     ) async throws {
+        let execution = try await executeProcess(
+            executable: executable,
+            arguments: arguments,
+            aggregatesPlaylistProgress: true,
+            progressHandler: progressHandler
+        )
+
+        guard execution.terminationStatus == 0 else {
+            throw YtDlpError.downloadFailed(diagnosticMessage(from: execution.output))
+        }
+    }
+
+    private static func runCommand(
+        executable: String,
+        arguments: [String],
+        timeoutNanoseconds: UInt64? = nil
+    ) async throws -> String {
+        let execution = try await executeProcess(
+            executable: executable,
+            arguments: arguments,
+            aggregatesPlaylistProgress: false,
+            progressHandler: nil,
+            timeoutNanoseconds: timeoutNanoseconds,
+            maximumOutputBytes: nil
+        )
+
+        guard execution.terminationStatus == 0 else {
+            throw YtDlpError.commandFailed(execution.output.isEmpty ? executable : execution.output)
+        }
+
+        return execution.output
+    }
+
+    private static func executeProcess(
+        executable: String,
+        arguments: [String],
+        aggregatesPlaylistProgress: Bool,
+        progressHandler: (@Sendable (Double) -> Void)?,
+        timeoutNanoseconds: UInt64? = nil,
+        maximumOutputBytes: Int? = 128 * 1_024
+    ) async throws -> ProcessExecutionResult {
+        try Task.checkCancellation()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        var progressEmitter = ProgressEmitter()
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -710,56 +873,79 @@ actor YtDlpDownloadService {
         } catch {
             throw YtDlpError.launchFailed(error.localizedDescription)
         }
+        try? pipe.fileHandleForWriting.close()
 
-        var output = ""
-        while process.isRunning {
-            let data = pipe.fileHandleForReading.availableData
-            guard !data.isEmpty else {
-                try await Task.sleep(nanoseconds: 100_000_000)
-                continue
+        let control = ProcessExecutionControl(process: process, readHandle: pipe.fileHandleForReading)
+        let readerTask = Task.detached(priority: .utility) {
+            var output = Data()
+            var pendingLine = ""
+            var progressEmitter = ProgressEmitter(aggregatesPlaylistProgress: aggregatesPlaylistProgress)
+            let handle = pipe.fileHandleForReading
+
+            while true {
+                let data: Data
+                do {
+                    guard let nextData = try handle.read(upToCount: 64 * 1_024),
+                          !nextData.isEmpty else { break }
+                    data = nextData
+                } catch {
+                    break
+                }
+                Self.appendProcessOutput(data, to: &output, maximumBytes: maximumOutputBytes)
+
+                guard progressHandler != nil else { continue }
+                pendingLine.append(String(decoding: data, as: UTF8.self))
+                while let newline = pendingLine.firstIndex(where: { $0.isNewline }) {
+                    let line = String(pendingLine[..<newline])
+                    pendingLine.removeSubrange(...newline)
+                    progressEmitter.consume(line, to: progressHandler)
+                }
             }
-            let text = String(decoding: data, as: UTF8.self)
-            output.append(text)
-            if let progress = Self.progressPercent(from: text) {
-                progressEmitter.emit(progress, to: progressHandler)
+
+            if !pendingLine.isEmpty {
+                progressEmitter.consume(pendingLine, to: progressHandler)
             }
+            process.waitUntilExit()
+
+            return ProcessExecutionResult(
+                output: String(decoding: output, as: UTF8.self),
+                terminationStatus: process.terminationStatus
+            )
         }
 
-        let remainingData = pipe.fileHandleForReading.readDataToEndOfFile()
-        if !remainingData.isEmpty {
-            let text = String(decoding: remainingData, as: UTF8.self)
-            output.append(text)
-            if let progress = Self.progressPercent(from: text) {
-                progressEmitter.emit(progress, to: progressHandler, force: true)
+        let timeoutTask: Task<Void, Never>? = timeoutNanoseconds.map { timeout in
+            Task.detached(priority: .utility) {
+                do {
+                    try await Task.sleep(nanoseconds: timeout)
+                    control.stop(reason: .timedOut)
+                } catch {
+                    return
+                }
             }
         }
+        defer { timeoutTask?.cancel() }
 
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            throw YtDlpError.downloadFailed(diagnosticMessage(from: output))
+        return try await withTaskCancellationHandler {
+            let result = await readerTask.value
+            switch control.stopReason {
+            case .some(.cancelled):
+                throw CancellationError()
+            case .some(.timedOut):
+                throw YtDlpError.commandTimedOut
+            case .none:
+                try Task.checkCancellation()
+                return result
+            }
+        } onCancel: {
+            control.stop(reason: .cancelled)
         }
     }
 
-    private static func runCommand(executable: String, arguments: [String]) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        let output = String(decoding: data, as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw YtDlpError.commandFailed(output.isEmpty ? executable : output)
+    private static func appendProcessOutput(_ data: Data, to output: inout Data, maximumBytes: Int?) {
+        output.append(data)
+        if let maximumBytes, output.count > maximumBytes {
+            output.removeFirst(output.count - maximumBytes)
         }
-
-        return output
     }
 
     private static func diagnosticMessage(from output: String) -> String {
@@ -1502,6 +1688,7 @@ actor YtDlpDownloadService {
         _ = try await runCommand(
             executable: executable,
             arguments: [
+                "--ignore-config",
                 "--skip-download",
                 "--no-playlist",
                 "--write-thumbnail",
@@ -1591,38 +1778,125 @@ actor YtDlpDownloadService {
         return terms.contains { normalized.contains($0) }
     }
 
-    private static func progressPercent(from text: String) -> Double? {
-        let pattern = #"([0-9]+(?:\.[0-9]+)?)%"#
-        guard let range = text.range(of: pattern, options: .regularExpression) else {
-            return nil
-        }
+}
 
-        let token = text[range].replacingOccurrences(of: "%", with: "")
-        guard let percent = Double(token.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            return nil
-        }
+private struct ProcessExecutionResult: Sendable {
+    let output: String
+    let terminationStatus: Int32
+}
 
-        return min(max(percent / 100, 0), 1)
+private final class ProcessExecutionControl: @unchecked Sendable {
+    enum StopReason {
+        case cancelled
+        case timedOut
+    }
+
+    private let process: Process
+    private let readHandle: FileHandle
+    private let lock = NSLock()
+    private var storedStopReason: StopReason?
+
+    init(process: Process, readHandle: FileHandle) {
+        self.process = process
+        self.readHandle = readHandle
+    }
+
+    var stopReason: StopReason? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedStopReason
+    }
+
+    func stop(reason: StopReason) {
+        lock.lock()
+        guard storedStopReason == nil, process.isRunning else {
+            lock.unlock()
+            return
+        }
+        storedStopReason = reason
+        lock.unlock()
+
+        process.terminate()
+        try? readHandle.close()
+
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [weak process] in
+            guard let process, process.isRunning else { return }
+            #if os(macOS)
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+            #else
+            process.terminate()
+            #endif
+        }
     }
 }
 
 private struct ProgressEmitter {
+    private let aggregatesPlaylistProgress: Bool
     private var lastEmittedProgress: Double?
+    private var lastEmissionTime: TimeInterval = 0
+    private var playlistIndex = 1
+    private var playlistCount = 1
+
+    init(aggregatesPlaylistProgress: Bool) {
+        self.aggregatesPlaylistProgress = aggregatesPlaylistProgress
+    }
+
+    mutating func consume(_ line: String, to handler: (@Sendable (Double) -> Void)?) {
+        let tokens = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        if aggregatesPlaylistProgress {
+            for index in tokens.indices where index + 3 < tokens.count {
+                let marker = tokens[index].lowercased()
+                guard marker == "item" || marker == "video",
+                      tokens[index + 2].lowercased() == "of",
+                      let itemIndex = Int(tokens[index + 1]),
+                      let itemCount = Int(tokens[index + 3]),
+                      itemIndex > 0,
+                      itemCount > 0 else {
+                    continue
+                }
+                playlistIndex = min(itemIndex, itemCount)
+                playlistCount = itemCount
+                break
+            }
+        }
+
+        guard let percentToken = tokens.last(where: { $0.contains("%") }),
+              let percentRange = percentToken.range(of: #"[0-9]+(?:\.[0-9]+)?"#, options: .regularExpression),
+              let percent = Double(percentToken[percentRange]) else {
+            return
+        }
+
+        let itemProgress = min(max(percent / 100, 0), 1)
+        let progress: Double
+        if aggregatesPlaylistProgress, playlistCount > 1 {
+            progress = (Double(playlistIndex - 1) + itemProgress) / Double(playlistCount)
+        } else {
+            progress = itemProgress
+        }
+        emit(progress, to: handler)
+    }
 
     mutating func emit(
         _ progress: Double,
-        to handler: (@Sendable (Double) -> Void)?,
-        force: Bool = false
+        to handler: (@Sendable (Double) -> Void)?
     ) {
         let clampedProgress = min(max(progress, 0), 1)
-        guard force ||
-            clampedProgress >= 1 ||
+        if let lastEmittedProgress {
+            guard lastEmittedProgress < 1,
+                  clampedProgress >= lastEmittedProgress else {
+                return
+            }
+        }
+
+        let now = Date.timeIntervalSinceReferenceDate
+        guard clampedProgress >= 1 ||
             lastEmittedProgress == nil ||
-            abs(clampedProgress - (lastEmittedProgress ?? 0)) >= 0.01 else {
+            (clampedProgress - (lastEmittedProgress ?? 0) >= 0.005 && now - lastEmissionTime >= 0.1) else {
             return
         }
 
         lastEmittedProgress = clampedProgress
+        lastEmissionTime = now
         handler?(clampedProgress)
     }
 }
@@ -1765,6 +2039,7 @@ enum YtDlpError: LocalizedError {
     case notFound
     case downloadFailed(String)
     case commandFailed(String)
+    case commandTimedOut
     case launchFailed(String)
 
     var errorDescription: String? {
@@ -1775,6 +2050,8 @@ enum YtDlpError: LocalizedError {
             return "Download failed: \(message)"
         case let .commandFailed(command):
             return "Command failed: \(command)"
+        case .commandTimedOut:
+            return "The download helper timed out."
         case let .launchFailed(reason):
             return "Could not start the download helper: \(reason)"
         }
