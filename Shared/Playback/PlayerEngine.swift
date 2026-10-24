@@ -749,8 +749,13 @@ public final class PlayerEngine: ObservableObject {
         guard state.status == .playing else { return }
         guard scheduleID == activeScheduleID, itemID == activeScheduleItemID else { return }
         guard itemID == state.currentItem?.id else { return }
-        updateCurrentTimeFromPlayer(advancesAtEnd: false)
-        guard playbackHasReachedEnd() else { return }
+
+        // `.dataPlayedBack` means the complete scheduled segment reached the
+        // output. Do not revalidate this against player-node sample time: the
+        // node can render at a different sample rate than a high-resolution
+        // source file (for example, 44.1 kHz output for an 88.2 kHz FLAC).
+        loadedFramePosition = effectiveEndFrame
+        state.currentTime = state.duration
 
         finishCurrentItem()
     }
@@ -810,8 +815,13 @@ public final class PlayerEngine: ObservableObject {
 
         if let nodeTime = playerNode.lastRenderTime,
            let playerTime = playerNode.playerTime(forNodeTime: nodeTime) {
-            let currentFrame = scheduledStartFrame + AVAudioFramePosition(playerTime.sampleTime)
-            loadedFramePosition = min(currentFrame, effectiveEndFrame)
+            loadedFramePosition = Self.sourceFramePosition(
+                scheduledStartFrame: scheduledStartFrame,
+                playerSampleTime: playerTime.sampleTime,
+                playerSampleRate: playerTime.sampleRate,
+                sourceSampleRate: audioFile.processingFormat.sampleRate,
+                endFrame: effectiveEndFrame
+            )
             state.currentTime = TimeInterval(loadedFramePosition) / audioFile.processingFormat.sampleRate
         } else {
             state.currentTime = TimeInterval(loadedFramePosition) / audioFile.processingFormat.sampleRate
@@ -843,6 +853,25 @@ public final class PlayerEngine: ObservableObject {
         guard let audioFile else { return playbackEndFrame }
         guard playbackEndFrame > 0 else { return audioFile.length }
         return min(playbackEndFrame, audioFile.length)
+    }
+
+    nonisolated static func sourceFramePosition(
+        scheduledStartFrame: AVAudioFramePosition,
+        playerSampleTime: AVAudioFramePosition,
+        playerSampleRate: Double,
+        sourceSampleRate: Double,
+        endFrame: AVAudioFramePosition
+    ) -> AVAudioFramePosition {
+        guard playerSampleRate.isFinite,
+              sourceSampleRate.isFinite,
+              playerSampleRate > 0,
+              sourceSampleRate > 0 else {
+            return min(max(scheduledStartFrame + playerSampleTime, 0), endFrame)
+        }
+
+        let renderedSeconds = Double(playerSampleTime) / playerSampleRate
+        let elapsedSourceFrames = AVAudioFramePosition((renderedSeconds * sourceSampleRate).rounded())
+        return min(max(scheduledStartFrame + elapsedSourceFrames, 0), endFrame)
     }
 
     nonisolated private static func playbackEndFrame(for playbackEndTime: TimeInterval?, file: AVAudioFile) -> AVAudioFramePosition {
@@ -902,6 +931,7 @@ public struct PlaybackAnalysis: Equatable, Sendable {
         self.normalization = normalization
         self.playbackEndTime = playbackEndTime
     }
+
 }
 
 public actor PlaybackNormalizationAnalyzer {

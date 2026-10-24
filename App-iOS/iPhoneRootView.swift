@@ -16,6 +16,8 @@ struct iPhoneRootView: View {
 
             selectedContent
         }
+        .disabled(appModel.libraryNeedsRecovery)
+        .safeAreaInset(edge: .top, spacing: 0) { LibraryRecoveryBanner() }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
                 MiniPlayerBar()
@@ -598,14 +600,14 @@ private struct iPhonePlaylistDetailView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         iPhonePlaylistHero(
                             playlist: playlist,
-                            trackCount: entries.count,
+                            trackCount: playlist.displayedItemCount,
                             duration: tracks.compactMap(\.duration).reduce(0, +)
                         ) {
                             appModel.playPlaylist(playlist)
                         }
 
                         LazyVStack(alignment: .leading, spacing: 2) {
-                            if entries.isEmpty {
+                            if entries.isEmpty && playlist.unresolvedImportedItems.isEmpty {
                                 iPhoneEmptyText(title: "Empty playlist", subtitle: "Add songs from album menus.")
                                     .padding(.horizontal, 8)
                             } else {
@@ -624,6 +626,40 @@ private struct iPhonePlaylistDetailView: View {
                                             appModel.removePlaylistItem(entry.item, from: playlist)
                                         }
                                     }
+                                }
+                            }
+
+                            if !playlist.unresolvedImportedItems.isEmpty {
+                                Text("Linked from \(playlist.importSource?.service.displayName ?? "music service")")
+                                    .font(.headline)
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 8)
+                                    .padding(.top, 18)
+
+                                ForEach(playlist.unresolvedImportedItems) { item in
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "link")
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 28)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(item.title)
+                                                .foregroundStyle(.white)
+                                                .lineLimit(1)
+                                            Text(item.artist ?? "Not in Nightwing")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        Spacer()
+                                        if let sourceURL = item.sourceURL {
+                                            Link(destination: sourceURL) {
+                                                Image(systemName: "arrow.up.right.square")
+                                                    .foregroundStyle(Color.nwAccent)
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 9)
                                 }
                             }
                         }
@@ -1192,7 +1228,7 @@ private struct iPhonePlaylistListRow: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
 
-                Text("Playlist • \(playlist.items.count) track\(playlist.items.count == 1 ? "" : "s")")
+                Text("Playlist • \(playlist.displayedItemCount) item\(playlist.displayedItemCount == 1 ? "" : "s")")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -1221,7 +1257,7 @@ private struct iPhonePlaylistCard: View {
                 .foregroundStyle(.white)
                 .lineLimit(1)
 
-            Text("\(playlist.items.count) track\(playlist.items.count == 1 ? "" : "s")")
+            Text("\(playlist.displayedItemCount) item\(playlist.displayedItemCount == 1 ? "" : "s")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

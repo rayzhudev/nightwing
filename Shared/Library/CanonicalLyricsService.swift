@@ -59,31 +59,56 @@ public actor CanonicalLyricsService {
     }
 
     static func parseLRC(_ value: String, trackDuration: TimeInterval) -> [LyricsLine] {
-        let pattern = #"^\[(\d{1,3}):(\d{2})(?:[\.:](\d{1,3}))?\]\s*(.*)$"#
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let timestamp = try! NSRegularExpression(pattern: #"\[(\d{1,3}):([0-5]\d)(?:[\.:](\d{1,3}))?\]"#)
+        let offsetPattern = try! NSRegularExpression(pattern: #"^\[offset:([+-]?\d+)\]$"#, options: .caseInsensitive)
+        var offset: TimeInterval = 0
         var timed: [(TimeInterval, String)] = []
-        for rawLine in value.components(separatedBy: .newlines) {
-            let range = NSRange(rawLine.startIndex..<rawLine.endIndex, in: rawLine)
-            guard let match = expression.firstMatch(in: rawLine, range: range),
-                  let minuteRange = Range(match.range(at: 1), in: rawLine),
-                  let secondRange = Range(match.range(at: 2), in: rawLine),
-                  let textRange = Range(match.range(at: 4), in: rawLine),
-                  let minutes = Double(rawLine[minuteRange]),
-                  let seconds = Double(rawLine[secondRange]) else { continue }
-            let fraction: Double
-            if let fractionRange = Range(match.range(at: 3), in: rawLine) {
-                let digits = String(rawLine[fractionRange])
-                fraction = (Double(digits) ?? 0) / pow(10, Double(digits.count))
-            } else {
-                fraction = 0
+        for raw in value.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            if let match = offsetPattern.firstMatch(in: line, range: range),
+               let numberRange = Range(match.range(at: 1), in: line),
+               let milliseconds = Double(line[numberRange]) {
+                offset = milliseconds / 1000
+                continue
             }
-            let text = rawLine[textRange].trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty { timed.append((minutes * 60 + seconds + fraction, text)) }
+            let matches = timestamp.matches(in: line, range: range)
+            guard let first = matches.first, first.range.location == 0 else { continue }
+            // Only leading timestamp tags are timing; brackets within lyrics are text.
+            var end = 0
+            let leading = matches.prefix { match in
+                guard match.range.location == end else { return false }
+                end = NSMaxRange(match.range)
+                return true
+            }
+            let text = (line as NSString).substring(from: end).trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty else { continue }
+            for match in leading {
+                let string = line as NSString
+                let minutes = Double(string.substring(with: match.range(at: 1))) ?? 0
+                let seconds = Double(string.substring(with: match.range(at: 2))) ?? 0
+                let fractionRange = match.range(at: 3)
+                let fraction = fractionRange.location == NSNotFound ? 0 :
+                    (Double(string.substring(with: fractionRange)) ?? 0) / pow(10, Double(fractionRange.length))
+                timed.append((minutes * 60 + seconds + fraction, text))
+            }
         }
-        return timed.enumerated().map { index, item in
-            let end = index + 1 < timed.count ? timed[index + 1].0 : max(trackDuration, item.0 + 2)
-            return LyricsLine(startTime: item.0, endTime: max(end, item.0 + 0.2), text: item.1)
+        // Positive LRC offsets advance the display relative to the audio.
+        var sorted: [(time: TimeInterval, text: String, order: Int)] = []
+        for (index, item) in timed.enumerated() {
+            sorted.append((time: max(0, item.0 - offset), text: item.1, order: index))
         }
+        sorted.sort { lhs, rhs in
+            if lhs.time == rhs.time { return lhs.order < rhs.order }
+            return lhs.time < rhs.time
+        }
+        var result: [LyricsLine] = []
+        for (index, item) in sorted.enumerated() {
+            let next = sorted.dropFirst(index + 1).first { $0.time > item.time }
+            let end = next?.time ?? max(trackDuration, item.time + 2)
+            result.append(LyricsLine(startTime: item.time, endTime: max(end, item.time + 0.2), text: item.text))
+        }
+        return result
     }
 
     static func align(_ canonicalLines: [String], to transcript: [LyricsLine]) -> [LyricsLine] {

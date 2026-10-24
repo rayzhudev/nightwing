@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct MacRootView: View {
     @EnvironmentObject private var appModel: NightwingAppModel
+    @AppStorage("nightwing.accentColor") private var accentColor = NightwingAccent.blue.rawValue
 
     @State private var selection: MacSidebarSelection = .home
     @State private var searchText = ""
@@ -37,10 +38,14 @@ struct MacRootView: View {
                 }
                 .padding(8)
 
-                MiniPlayerBar(showsQueue: $showsQueue)
+                MiniPlayerBar(showsQueue: $showsQueue) {
+                    selection = .lyrics
+                }
                     .frame(height: 88)
             }
         }
+        .disabled(appModel.libraryNeedsRecovery)
+        .safeAreaInset(edge: .top, spacing: 0) { LibraryRecoveryBanner() }
         .fileImporter(
             isPresented: $showsImporter,
             allowedContentTypes: [.audio, .folder],
@@ -52,14 +57,19 @@ struct MacRootView: View {
         }
         .preferredColorScheme(.dark)
         .tint(NightwingTheme.action)
+        .environment(\.controlActiveState, .active)
+        .id(accentColor)
     }
 }
 
 private enum MacSidebarSelection: Hashable {
     case home
+    case search
+    case lyrics
     case onlineDownloads
     case onlineAlbum(OnlineAlbumSearchResult.ID)
     case album(LibraryAlbumGroup.ID)
+    case musicService(MusicPlaylistService)
     case playlists
     case playlist(Playlist.ID)
 }
@@ -100,6 +110,11 @@ private struct SpotifySidebarView: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            ConnectedServicesSidebarSection(
+                selection: $selection,
+                connections: appModel.musicServiceConnections
+            )
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -170,6 +185,21 @@ private struct SpotifySidebarView: View {
                                 ) {
                                     navigate(to: .album(album.id))
                                 }
+                                .contextMenu {
+                                    Button("Play", systemImage: "play.fill") {
+                                        appModel.playAlbum(album)
+                                    }
+
+                                    if album.isOnlineDownloadedAlbum {
+                                        Button("Delete Download", systemImage: "trash", role: .destructive) {
+                                            appModel.deleteOnlineDownloadedAlbum(album)
+                                        }
+                                    } else {
+                                        Button("Remove from Library", systemImage: "minus.circle", role: .destructive) {
+                                            appModel.removeImportedAlbum(album)
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -192,7 +222,9 @@ private struct SpotifySidebarView: View {
                             ForEach(appModel.library.playlists) { playlist in
                                 SpotifyLibraryRow(
                                     title: playlist.name,
-                                    subtitle: "\(playlist.items.count) track\(playlist.items.count == 1 ? "" : "s")",
+                                    subtitle: playlist.importSource.map {
+                                        "\(playlist.displayedItemCount) items · \($0.service.displayName) import"
+                                    } ?? "\(playlist.displayedItemCount) item\(playlist.displayedItemCount == 1 ? "" : "s")",
                                     isSelected: selection == .playlist(playlist.id),
                                     doubleClickAction: {
                                         appModel.playPlaylist(playlist)
@@ -225,6 +257,7 @@ private struct SpotifyContentView: View {
     @Binding var showsQueue: Bool
     @Binding var showsImporter: Bool
     @State private var searchScope: SearchScope = .all
+    @State private var selectionBeforeSearch: MacSidebarSelection = .home
 
     private var trimmedSearchText: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -254,38 +287,10 @@ private struct SpotifyContentView: View {
             )
 
             Group {
-                if trimmedSearchText.isEmpty || selection != .home {
-                    switch selection {
-                    case .home:
-                        SpotifyHomeView(selection: $selection, searchText: $searchText)
-                    case .onlineDownloads:
-                        SpotifyOnlineDownloadsView(selectedTrackID: $selectedTrackID)
-                    case .onlineAlbum(let albumID):
-                        if let album = appModel.onlineAlbumResults.first(where: { $0.id == albumID }) {
-                            SpotifyOnlineAlbumDetailView(selection: $selection, album: album)
-                        } else {
-                            SpotifyHomeView(selection: $selection, searchText: $searchText)
-                        }
-                    case .album(let albumID):
-                        if let album = appModel.albumGroup(id: albumID) {
-                            SpotifyAlbumDetailView(album: album, selectedTrackID: $selectedTrackID)
-                        } else {
-                            SpotifyHomeView(selection: $selection, searchText: $searchText)
-                        }
-                    case .playlists:
-                        SpotifyPlaylistsView(selection: $selection)
-                    case .playlist(let playlistID):
-                        if let playlist = appModel.playlist(id: playlistID) {
-                            SpotifyPlaylistDetailView(
-                                selection: $selection,
-                                playlist: playlist,
-                                selectedTrackID: $selectedTrackID
-                            )
-                        } else {
-                            SpotifyPlaylistsView(selection: $selection)
-                        }
-                    }
-                } else {
+                switch selection {
+                case .home:
+                    SpotifyHomeView(selection: $selection, searchText: $searchText)
+                case .search:
                     ScrollView {
                         SpotifyUnifiedSearchView(
                             selection: $selection,
@@ -299,6 +304,41 @@ private struct SpotifyContentView: View {
                         .padding(.horizontal, 28)
                         .padding(.bottom, 28)
                     }
+                case .lyrics:
+                    LyricsPanel(track: appModel.currentDisplayTrack())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .onlineDownloads:
+                    SpotifyOnlineDownloadsView(selectedTrackID: $selectedTrackID)
+                case .onlineAlbum(let albumID):
+                    if let album = appModel.onlineAlbumResults.first(where: { $0.id == albumID }) {
+                        SpotifyOnlineAlbumDetailView(selection: $selection, album: album)
+                    } else {
+                        SpotifyHomeView(selection: $selection, searchText: $searchText)
+                    }
+                case .album(let albumID):
+                    if let album = appModel.albumGroup(id: albumID) {
+                        SpotifyAlbumDetailView(album: album, selectedTrackID: $selectedTrackID)
+                    } else {
+                        SpotifyHomeView(selection: $selection, searchText: $searchText)
+                    }
+                case .musicService(let service):
+                    ConnectedMusicServiceView(
+                        service: service,
+                        selection: $selection,
+                        connections: appModel.musicServiceConnections
+                    )
+                case .playlists:
+                    SpotifyPlaylistsView(selection: $selection)
+                case .playlist(let playlistID):
+                    if let playlist = appModel.playlist(id: playlistID) {
+                        SpotifyPlaylistDetailView(
+                            selection: $selection,
+                            playlist: playlist,
+                            selectedTrackID: $selectedTrackID
+                        )
+                    } else {
+                        SpotifyPlaylistsView(selection: $selection)
+                    }
                 }
             }
         }
@@ -308,7 +348,19 @@ private struct SpotifyContentView: View {
             updateOnlineSearch()
         }
         .onChange(of: searchText) { _, _ in
+            updateSearchNavigation()
             updateOnlineSearch()
+        }
+    }
+
+    private func updateSearchNavigation() {
+        if !trimmedSearchText.isEmpty {
+            if selection != .search {
+                selectionBeforeSearch = selection
+                selection = .search
+            }
+        } else if selection == .search {
+            selection = selectionBeforeSearch
         }
     }
 
@@ -952,7 +1004,7 @@ private struct SearchTopResultCard: View {
         switch topHit {
         case let .track(track): return "\(track.displayArtist) - Song"
         case let .album(album): return "\(album.artistSummary) - Album"
-        case let .playlist(playlist): return "\(playlist.items.count) track\(playlist.items.count == 1 ? "" : "s") - Playlist"
+        case let .playlist(playlist): return "\(playlist.displayedItemCount) item\(playlist.displayedItemCount == 1 ? "" : "s") - Playlist"
         case let .onlineTrack(result): return "\(result.artist ?? "Unknown Artist") - Song"
         case let .onlineAlbum(album): return "\(album.artist ?? "Unknown Artist") - Album"
         }
@@ -1233,7 +1285,7 @@ private struct SpotifyOnlineAlbumDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 Button {
-                    selection = .home
+                    selection = .search
                 } label: {
                     Label("Back to search", systemImage: "chevron.left")
                 }
@@ -1698,6 +1750,367 @@ private struct SpotifyOnlineDownloadsView: View {
     }
 }
 
+private struct ConnectedServicesSidebarSection: View {
+    @Binding var selection: MacSidebarSelection
+    @ObservedObject var connections: MusicServiceConnections
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Connected Services")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(NightwingTheme.secondaryText)
+                .padding(.horizontal, 4)
+
+            ForEach(MusicPlaylistService.allCases, id: \.self) { service in
+                Button {
+                    selection = .musicService(service)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: serviceIcon(for: service))
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(serviceTint(for: service))
+                            .frame(width: 28, height: 28)
+                            .background(serviceTint(for: service).opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(service.displayName)
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(NightwingTheme.primaryText)
+                            Text(statusText(for: service))
+                                .font(.caption)
+                                .foregroundStyle(NightwingTheme.secondaryText)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        Circle()
+                            .fill(connections.state(for: service).isConnected ? Color.green : NightwingTheme.secondaryText.opacity(0.45))
+                            .frame(width: 7, height: 7)
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        selection == .musicService(service) ? NightwingTheme.rowHover : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .background(NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func statusText(for service: MusicPlaylistService) -> String {
+        switch connections.state(for: service) {
+        case .disconnected:
+            return "Not connected"
+        case .connecting:
+            return "Signing in…"
+        case .connected(let accountName):
+            return accountName ?? "Connected"
+        case .failed:
+            return "Needs attention"
+        }
+    }
+}
+
+private struct ConnectedMusicServiceView: View {
+    @EnvironmentObject private var appModel: NightwingAppModel
+
+    let service: MusicPlaylistService
+    @Binding var selection: MacSidebarSelection
+    @ObservedObject var connections: MusicServiceConnections
+
+    private var state: MusicServiceConnectionState {
+        connections.state(for: service)
+    }
+
+    private var playlists: [RemoteMusicPlaylist] {
+        connections.playlists(for: service)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                serviceHeader
+
+                if state.isConnected {
+                    connectedContent
+                } else {
+                    disconnectedContent
+                }
+            }
+            .padding(28)
+        }
+        .task(id: state.isConnected) {
+            if state.isConnected && playlists.isEmpty {
+                await connections.loadPlaylists(for: service)
+            }
+        }
+    }
+
+    private var serviceHeader: some View {
+        HStack(alignment: .center, spacing: 18) {
+            Image(systemName: serviceIcon(for: service))
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(serviceTint(for: service))
+                .frame(width: 62, height: 62)
+                .background(serviceTint(for: service).opacity(0.12), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(service.displayName)
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundStyle(NightwingTheme.primaryText)
+
+                Label("Connected service · not part of your local Nightwing library", systemImage: "cloud")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(NightwingTheme.secondaryText)
+            }
+
+            Spacer()
+
+            if state.isConnected {
+                Button {
+                    Task { await connections.loadPlaylists(for: service) }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(NightwingTheme.primaryText)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .background(NightwingTheme.rowHover, in: Capsule())
+                .disabled(connections.loadingServices.contains(service))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var connectedContent: some View {
+        if let error = connections.playlistErrors[service] {
+            HStack {
+                Text(error).foregroundStyle(NightwingTheme.secondaryText)
+                Spacer()
+                Button("Retry") { Task { await connections.loadPlaylists(for: service) } }
+                    .disabled(connections.loadingServices.contains(service))
+            }
+            .padding(12)
+            .background(NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 10))
+        }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Remote Playlists")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(NightwingTheme.primaryText)
+                Spacer()
+                Text("\(playlists.count) on \(service.displayName)")
+                    .font(.callout)
+                    .foregroundStyle(NightwingTheme.secondaryText)
+            }
+
+            Text("These playlists remain on \(service.displayName). Importing creates or refreshes a clearly labelled local copy in Nightwing Playlists.")
+                .font(.callout)
+                .foregroundStyle(NightwingTheme.secondaryText)
+        }
+
+        if connections.loadingServices.contains(service) && playlists.isEmpty {
+            VStack(spacing: 12) {
+                ProgressView()
+                Text("Loading playlists from \(service.displayName)…")
+                    .foregroundStyle(NightwingTheme.secondaryText)
+            }
+            .frame(maxWidth: .infinity, minHeight: 300)
+        } else if playlists.isEmpty {
+            PlaceholderStateView(
+                title: "No Remote Playlists",
+                systemImage: "cloud",
+                message: "\(service.displayName) did not return any playlists for this account."
+            )
+            .frame(minHeight: 320)
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 250), spacing: 18)], alignment: .leading, spacing: 18) {
+                ForEach(playlists) { playlist in
+                    RemoteMusicPlaylistCard(
+                        playlist: playlist,
+                        localPlaylist: localCopy(of: playlist),
+                        isImporting: appModel.isImporting(playlist),
+                        openLocalCopy: { localID in selection = .playlist(localID) },
+                        importAction: { appModel.importRemotePlaylist(playlist) }
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var disconnectedContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            switch state {
+            case .failed(let message):
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            default:
+                Text("Connect \(service.displayName) to browse its playlists here. Nothing is added to your Nightwing library until you press Import to Nightwing.")
+                    .foregroundStyle(NightwingTheme.secondaryText)
+            }
+
+            HStack(spacing: 12) {
+                if MusicServiceConnections.isConfigured(for: service) {
+                    Button {
+                        Task { await connections.connectUsingSavedCredentials(service) }
+                    } label: {
+                        Label("Connect \(service.displayName)", systemImage: "link")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 9)
+                    .background(NightwingTheme.action, in: Capsule())
+                    .disabled(state == .connecting)
+                }
+
+                SettingsLink {
+                    Label(MusicServiceConnections.isConfigured(for: service) ? "Connection Settings" : "Set Up Connection", systemImage: "gearshape")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(NightwingTheme.primaryText)
+                .padding(.horizontal, 15)
+                .padding(.vertical, 9)
+                .background(NightwingTheme.rowHover, in: Capsule())
+
+                if state == .connecting {
+                    ProgressView().controlSize(.small)
+                }
+            }
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func localCopy(of remotePlaylist: RemoteMusicPlaylist) -> Playlist? {
+        appModel.library.playlists.first {
+            $0.importSource?.service == remotePlaylist.service
+                && $0.importSource?.externalID == remotePlaylist.id
+        }
+    }
+}
+
+private struct RemoteMusicPlaylistCard: View {
+    let playlist: RemoteMusicPlaylist
+    let localPlaylist: Playlist?
+    let isImporting: Bool
+    let openLocalCopy: (Playlist.ID) -> Void
+    let importAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            remoteArtwork
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(playlist.name)
+                    .font(.headline)
+                    .foregroundStyle(NightwingTheme.primaryText)
+                    .lineLimit(2)
+
+                HStack(spacing: 6) {
+                    Label(playlist.service.displayName, systemImage: "cloud")
+                    Text("·")
+                    Text("\(playlist.itemCount) item\(playlist.itemCount == 1 ? "" : "s")")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(NightwingTheme.secondaryText)
+
+                if localPlaylist != nil {
+                    Label("Local copy in Nightwing", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                } else {
+                    Text("Remote only")
+                        .font(.caption)
+                        .foregroundStyle(serviceTint(for: playlist.service))
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 10) {
+                Button(action: importAction) {
+                    if isImporting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(localPlaylist == nil ? "Import to Nightwing" : "Refresh Local Copy")
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.black)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(NightwingTheme.action, in: Capsule())
+                .disabled(isImporting)
+
+                if let localPlaylist {
+                    Button("View Local") {
+                        openLocalCopy(localPlaylist.id)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(NightwingTheme.primaryText)
+                } else if let sourceURL = playlist.sourceURL {
+                    Link(destination: sourceURL) {
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .foregroundStyle(NightwingTheme.secondaryText)
+                    .help("Open on \(playlist.service.displayName)")
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 300, alignment: .topLeading)
+        .background(NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(serviceTint(for: playlist.service).opacity(0.25), lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var remoteArtwork: some View {
+        if let artworkURL = playlist.artworkURL {
+            AsyncImage(url: artworkURL) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    NightwingArtworkPlaceholder(size: 176, cornerRadius: 9, systemImage: serviceIcon(for: playlist.service))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(1, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        } else {
+            NightwingArtworkPlaceholder(size: 176, cornerRadius: 9, systemImage: serviceIcon(for: playlist.service))
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+private func serviceIcon(for service: MusicPlaylistService) -> String {
+    switch service {
+    case .youtube: "play.rectangle.fill"
+    case .spotify: "waveform.circle.fill"
+    }
+}
+
+private func serviceTint(for service: MusicPlaylistService) -> Color {
+    switch service {
+    case .youtube: Color(red: 1, green: 0.22, blue: 0.25)
+    case .spotify: Color(red: 0.12, green: 0.78, blue: 0.36)
+    }
+}
+
 private struct SpotifyPlaylistsView: View {
     @EnvironmentObject private var appModel: NightwingAppModel
 
@@ -1708,9 +2121,14 @@ private struct SpotifyPlaylistsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack {
-                    Text("Playlists")
-                        .font(.system(size: 34, weight: .bold))
-                        .foregroundStyle(NightwingTheme.primaryText)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Nightwing Playlists")
+                            .font(.system(size: 34, weight: .bold))
+                            .foregroundStyle(NightwingTheme.primaryText)
+                        Text("Local playlists stored in Nightwing. Connected-service imports appear here as labelled local copies.")
+                            .font(.callout)
+                            .foregroundStyle(NightwingTheme.secondaryText)
+                    }
 
                     Spacer()
 
@@ -1790,8 +2208,10 @@ private struct SpotifyPlaylistDetailView: View {
             VStack(alignment: .leading, spacing: 22) {
                 SpotifyCollectionHeader(
                     title: playlist.name,
-                    subtitle: "Playlist",
-                    detail: "\(tracks.count) track\(tracks.count == 1 ? "" : "s") - \(durationText)",
+                    subtitle: playlist.importSource.map { "\($0.service.displayName) Import" } ?? "Playlist",
+                    detail: playlist.importedItems == nil
+                        ? "\(tracks.count) track\(tracks.count == 1 ? "" : "s") - \(durationText)"
+                        : "\(playlist.displayedItemCount) items - \(tracks.count) playable in Nightwing",
                     systemImage: "music.note.list"
                 )
 
@@ -1802,7 +2222,9 @@ private struct SpotifyPlaylistDetailView: View {
                         }
                     }
 
-                    Text("\(tracks.count) track\(tracks.count == 1 ? "" : "s")")
+                    Text(playlist.importedItems == nil
+                        ? "\(tracks.count) track\(tracks.count == 1 ? "" : "s")"
+                        : "\(tracks.count) of \(playlist.displayedItemCount) matched")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(NightwingTheme.secondaryText)
 
@@ -1838,7 +2260,7 @@ private struct SpotifyPlaylistDetailView: View {
                     }
                 }
 
-                if tracks.isEmpty {
+                if tracks.isEmpty && playlist.unresolvedImportedItems.isEmpty {
                     PlaceholderStateView(
                         title: "Empty Playlist",
                         systemImage: "music.note.list",
@@ -1875,6 +2297,24 @@ private struct SpotifyPlaylistDetailView: View {
                                     appModel: appModel
                                 )
                             )
+                        }
+                    }
+                }
+
+                if !playlist.unresolvedImportedItems.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Linked from \(playlist.importSource?.service.displayName ?? "music service")")
+                            .font(.headline)
+                            .foregroundStyle(NightwingTheme.primaryText)
+
+                        Text("These items are not in your local Nightwing library yet. Open the source to listen there, or add matching local files and refresh the import.")
+                            .font(.callout)
+                            .foregroundStyle(NightwingTheme.secondaryText)
+
+                        LazyVStack(spacing: 2) {
+                            ForEach(playlist.unresolvedImportedItems) { item in
+                                ImportedPlaylistItemRow(item: item)
+                            }
                         }
                     }
                 }
@@ -2280,6 +2720,10 @@ private struct SpotifyAlbumCard: View {
                 Button("Delete Download", systemImage: "trash", role: .destructive) {
                     appModel.deleteOnlineDownloadedAlbum(album)
                 }
+            } else {
+                Button("Remove from Library", systemImage: "minus.circle", role: .destructive) {
+                    appModel.removeImportedAlbum(album)
+                }
             }
         }
     }
@@ -2309,10 +2753,17 @@ private struct SpotifyPlaylistCard: View {
                 .foregroundStyle(NightwingTheme.primaryText)
                 .lineLimit(1)
 
-            Text("\(playlist.items.count) track\(playlist.items.count == 1 ? "" : "s")")
+            Text("\(playlist.displayedItemCount) item\(playlist.displayedItemCount == 1 ? "" : "s")")
                 .font(.caption)
                 .foregroundStyle(NightwingTheme.secondaryText)
                 .lineLimit(1)
+
+            if let source = playlist.importSource {
+                Label("Local copy from \(source.service.displayName)", systemImage: "square.and.arrow.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(serviceTint(for: source.service))
+                    .lineLimit(1)
+            }
         }
         .padding(14)
         .background(isHovering ? NightwingTheme.panelElevated : NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -2322,7 +2773,44 @@ private struct SpotifyPlaylistCard: View {
     }
 }
 
+private struct ImportedPlaylistItemRow: View {
+    let item: ImportedPlaylistItem
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "link")
+                .foregroundStyle(NightwingTheme.secondaryText)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .foregroundStyle(NightwingTheme.primaryText)
+                    .lineLimit(1)
+                Text([item.artist, item.album].compactMap { $0 }.joined(separator: " - "))
+                    .font(.caption)
+                    .foregroundStyle(NightwingTheme.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if let sourceURL = item.sourceURL {
+                Link(destination: sourceURL) {
+                    Label("Open", systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(NightwingTheme.action)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(NightwingTheme.panel, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
 private struct SpotifyCollectionHeader: View {
+    @EnvironmentObject private var appModel: NightwingAppModel
+
     let title: String
     let subtitle: String
     let detail: String
@@ -2364,6 +2852,24 @@ private struct SpotifyCollectionHeader: View {
         }
         .padding(.top, 24)
         .padding(.bottom, 8)
+        .contentShape(Rectangle())
+        .contextMenu {
+            if let album {
+                Button("Play", systemImage: "play.fill") {
+                    appModel.playAlbum(album)
+                }
+
+                if album.isOnlineDownloadedAlbum {
+                    Button("Delete Download", systemImage: "trash", role: .destructive) {
+                        appModel.deleteOnlineDownloadedAlbum(album)
+                    }
+                } else {
+                    Button("Remove from Library", systemImage: "minus.circle", role: .destructive) {
+                        appModel.removeImportedAlbum(album)
+                    }
+                }
+            }
+        }
     }
 }
 

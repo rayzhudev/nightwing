@@ -1,8 +1,77 @@
 #if canImport(XCTest) && canImport(Nightwing_macOS)
+import AVFoundation
 import XCTest
 @testable import Nightwing_macOS
 
 final class CoreRegressionTests: XCTestCase {
+    func testAlbumDownloadErrorSurvivesPlaylistCompletionMessage() {
+        let output = """
+        ERROR: unable to download video data: HTTP Error 403: Forbidden
+        [download] Finished downloading playlist: Album - Superache
+        """
+        XCTAssertEqual(YtDlpDownloadService.diagnosticMessage(from: output),
+                       "ERROR: unable to download video data: HTTP Error 403: Forbidden")
+    }
+
+    func testDownloadDiagnosticKeepsLastErrorInsteadOfProgressOrWarning() {
+        let output = """
+        ERROR: first track failed
+        ERROR: second track is unavailable
+        WARNING: playlist incomplete
+        [download] Finished downloading playlist
+        """
+        XCTAssertEqual(YtDlpDownloadService.diagnosticMessage(from: output),
+                       "ERROR: second track is unavailable")
+        XCTAssertEqual(YtDlpDownloadService.diagnosticMessage(from: "\n "), "Unknown error")
+    }
+
+    func testOAuthRandomValuesAreURLSafeAndUnique() throws {
+        let first = try MusicServiceConnections.randomURLSafeString(byteCount: 48)
+        let second = try MusicServiceConnections.randomURLSafeString(byteCount: 48)
+
+        XCTAssertEqual(first.count, 64)
+        XCTAssertNotEqual(first, second)
+        XCTAssertNil(first.range(of: #"[^A-Za-z0-9_-]"#, options: .regularExpression))
+    }
+
+    func testOAuthCallbackParametersKeepFirstDuplicateValue() throws {
+        let callback = try XCTUnwrap(URL(string: "http://127.0.0.1:49152/callback?state=expected&state=attacker&code=one-time-code"))
+
+        let parameters = MusicServiceConnections.oauthParameters(from: callback)
+
+        XCTAssertEqual(parameters["state"], "expected")
+        XCTAssertEqual(parameters["code"], "one-time-code")
+    }
+
+    func testPlaybackProgressConvertsRenderFramesToHighResolutionSourceFrames() {
+        let startFrame: AVAudioFramePosition = 96 * 88_200
+        let playerFrames: AVAudioFramePosition = 90 * 44_100
+        let endFrame: AVAudioFramePosition = 260 * 88_200
+
+        let sourceFrame = PlayerEngine.sourceFramePosition(
+            scheduledStartFrame: startFrame,
+            playerSampleTime: playerFrames,
+            playerSampleRate: 44_100,
+            sourceSampleRate: 88_200,
+            endFrame: endFrame
+        )
+
+        XCTAssertEqual(sourceFrame, 186 * 88_200)
+    }
+
+    func testPlaybackProgressClampsConvertedFramesAtScheduledEnd() {
+        let endFrame: AVAudioFramePosition = 260 * 88_200
+        let sourceFrame = PlayerEngine.sourceFramePosition(
+            scheduledStartFrame: 250 * 88_200,
+            playerSampleTime: 20 * 44_100,
+            playerSampleRate: 44_100,
+            sourceSampleRate: 88_200,
+            endFrame: endFrame
+        )
+
+        XCTAssertEqual(sourceFrame, endFrame)
+    }
+
     func testReplacingShuffledQueueKeepsSelectedItemAndShufflesVisibleQueue() {
         let originalItems = makeQueueItems(count: 5, prefix: "original")
         let replacementItems = makeQueueItems(count: 6, prefix: "replacement")
@@ -174,6 +243,131 @@ final class CoreRegressionTests: XCTestCase {
         XCTAssertEqual(library.tracks.map(\.id), [keptTrack.id])
         XCTAssertEqual(library.queue.items.compactMap(\.trackID), [keptTrack.id])
         XCTAssertEqual(library.playlists[0].items.map(\.trackID), [keptTrack.id])
+    }
+
+    func testRemovingImportedTracksKeepsThemExcludedFromWatchedFolderRefresh() {
+        let removedTrack = Track(
+            fileURL: URL(fileURLWithPath: "/tmp/album/remove-me.mp3"),
+            title: "Remove me",
+            fileType: .mp3
+        )
+        let keptTrack = Track(
+            fileURL: URL(fileURLWithPath: "/tmp/other/keep-me.mp3"),
+            title: "Keep me",
+            fileType: .mp3
+        )
+        var library = LocalLibrary(tracks: [removedTrack, keptTrack])
+
+        library.removeImportedTracks([removedTrack])
+        let refreshedTracks = library.excludingRemovedImports(from: [removedTrack, keptTrack])
+        library.upsertTracks(refreshedTracks)
+
+        XCTAssertEqual(library.tracks.map(\.id), [keptTrack.id])
+    }
+
+    func testManualReimportRestoresPreviouslyRemovedTrack() {
+        let track = Track(
+            fileURL: URL(fileURLWithPath: "/tmp/album/restore-me.mp3"),
+            title: "Restore me",
+            fileType: .mp3
+        )
+        var library = LocalLibrary(tracks: [track])
+
+        library.removeImportedTracks([track])
+        library.restoreImports(for: [track])
+        library.upsertTracks([track])
+
+        XCTAssertEqual(library.tracks.map(\.id), [track.id])
+        XCTAssertTrue(library.excludingRemovedImports(from: [track]).contains(track))
+    }
+
+    func testRemovedImportPathsRemainCompatibleWithOlderPersistedLibraries() throws {
+        let data = try JSONEncoder().encode(LocalLibrary())
+
+        let library = try JSONDecoder().decode(LocalLibrary.self, from: data)
+
+        XCTAssertNil(library.removedImportedTrackPaths)
+    }
+
+    func testImportedPlaylistRefreshUpdatesInPlace() {
+        let matchedTrack = Track(
+            fileURL: URL(fileURLWithPath: "/tmp/nightwing-import-match.flac"),
+            title: "Midnight Flight",
+            artist: "Ray",
+            fileType: .flac
+        )
+        var library = LocalLibrary(tracks: [matchedTrack])
+        let source = PlaylistImportSource(
+            service: .spotify,
+            externalID: "spotify-playlist-1",
+            sourceURL: URL(string: "https://open.spotify.com/playlist/spotify-playlist-1")
+        )
+
+        let original = library.upsertImportedPlaylist(
+            name: "First Name",
+            source: source,
+            importedItems: [
+                ImportedPlaylistItem(id: "remote-1", title: "Midnight Flight", matchedTrackID: matchedTrack.id),
+                ImportedPlaylistItem(id: "remote-2", title: "Unmatched")
+            ]
+        )
+        let refreshed = library.upsertImportedPlaylist(
+            name: "Updated Name",
+            source: source,
+            importedItems: [
+                ImportedPlaylistItem(id: "remote-1", title: "Midnight Flight", matchedTrackID: matchedTrack.id)
+            ]
+        )
+
+        XCTAssertEqual(library.playlists.count, 1)
+        XCTAssertEqual(refreshed.id, original.id)
+        XCTAssertEqual(refreshed.name, "Updated Name")
+        XCTAssertEqual(refreshed.displayedItemCount, 1)
+        XCTAssertEqual(refreshed.items.map(\.trackID), [matchedTrack.id])
+    }
+
+    func testRemoteTrackMatcherHandlesYouTubeVideoLabels() {
+        let localTrack = Track(
+            fileURL: URL(fileURLWithPath: "/tmp/nightwing-matcher.mp3"),
+            title: "Blue Horizon",
+            artist: "Nightwing",
+            duration: 180,
+            fileType: .mp3
+        )
+        let remoteTrack = RemoteMusicTrack(
+            id: "video-1",
+            title: "Blue Horizon (Official Music Video)",
+            artist: "Nightwing",
+            duration: 182
+        )
+
+        let result = PlaylistTrackMatcher.match([remoteTrack], in: [localTrack])
+
+        XCTAssertEqual(result.first?.matchedTrackID, localTrack.id)
+    }
+
+    func testPlaylistWithoutImportMetadataStillDecodes() throws {
+        let playlist = Playlist(name: "Local Playlist")
+
+        let decoded = try JSONDecoder().decode(Playlist.self, from: JSONEncoder().encode(playlist))
+
+        XCTAssertNil(decoded.importSource)
+        XCTAssertNil(decoded.importedItems)
+        XCTAssertEqual(decoded.displayedItemCount, 0)
+    }
+
+    @MainActor
+    func testWatchedFolderDetectsNestedFileChanges() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let nested = directory.appendingPathComponent("Album")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let change = expectation(description: "Recursive filesystem change")
+        change.assertForOverFulfill = false
+        let monitor = WatchedFolderMonitor(urls: [directory]) { change.fulfill() }
+        try Data("new audio".utf8).write(to: nested.appendingPathComponent("song.mp3"))
+        await fulfillment(of: [change], timeout: 8)
+        withExtendedLifetime(monitor) {}
     }
 
     private func makeQueueItems(count: Int, prefix: String) -> [PlaybackQueueItem] {

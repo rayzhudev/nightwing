@@ -398,7 +398,12 @@ actor YtDlpDownloadService {
             if let preparedURL = prepareBundledYtDlp(from: bundleURL) {
                 appendExecutableCandidate(preparedURL.path, to: &candidates, seen: &seen)
             }
-            appendExecutableCandidate(bundleURL.path, to: &candidates, seen: &seen)
+            if candidates.isEmpty {
+                appendExecutableCandidate(bundleURL.path, to: &candidates, seen: &seen)
+            }
+            // The bundled helper and its prepared copy are the same version.
+            // Retrying both (then an older system install) only repeats failures.
+            if !candidates.isEmpty { return candidates }
         }
 
         if let path = ProcessInfo.processInfo.environment["PATH"] {
@@ -439,8 +444,7 @@ actor YtDlpDownloadService {
                 withIntermediateDirectories: true
             )
 
-            let shouldCopy = !fileManager.fileExists(atPath: destinationURL.path) ||
-                fileSize(at: destinationURL) != fileSize(at: bundleURL)
+            let shouldCopy = !fileManager.contentsEqual(atPath: destinationURL.path, andPath: bundleURL.path)
 
             if shouldCopy {
                 if fileManager.fileExists(atPath: destinationURL.path) {
@@ -467,11 +471,6 @@ actor YtDlpDownloadService {
             .appendingPathComponent("Nightwing")
             .appendingPathComponent("Helpers")
             .appendingPathComponent("yt-dlp")
-    }
-
-    private static func fileSize(at url: URL) -> UInt64? {
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
-        return values?.fileSize.map(UInt64.init)
     }
 
     private static func appendExecutableCandidate(_ path: String, to candidates: inout [String], seen: inout Set<String>) {
@@ -825,7 +824,9 @@ actor YtDlpDownloadService {
             progressHandler: progressHandler
         )
 
-        guard execution.terminationStatus == 0 else {
+        // --ignore-errors can exit successfully even when every playlist item
+        // failed. Preserve the actual extractor error before inspecting files.
+        guard execution.terminationStatus == 0, !execution.output.contains("ERROR:") else {
             throw YtDlpError.downloadFailed(diagnosticMessage(from: execution.output))
         }
     }
@@ -862,7 +863,12 @@ actor YtDlpDownloadService {
         try Task.checkCancellation()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
+        process.arguments = downloaderRuntimeArguments() + arguments
+        // Finder-launched apps do not inherit the user's shell PATH. Also make
+        // ffmpeg/ffprobe available for audio extraction and album downloads.
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = downloaderSearchDirectories().joined(separator: ":")
+        process.environment = environment
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -948,13 +954,39 @@ actor YtDlpDownloadService {
         }
     }
 
-    private static func diagnosticMessage(from output: String) -> String {
+    static func downloaderSearchDirectories() -> [String] {
+        var directories = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .components(separatedBy: ":").filter { !$0.isEmpty }
+        directories += ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+                        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".deno/bin").path]
+        var seen = Set<String>()
+        return directories.filter { seen.insert($0).inserted }
+    }
+
+    static func downloaderRuntimeArguments() -> [String] {
+        // yt-dlp only enables Deno by default. Enable an installed supported
+        // runtime explicitly and use an absolute path for GUI launches.
+        for runtime in ["deno", "node"] {
+            for directory in downloaderSearchDirectories() {
+                let path = URL(fileURLWithPath: directory).appendingPathComponent(runtime).path
+                if FileManager.default.isExecutableFile(atPath: path) {
+                    return ["--js-runtimes", "\(runtime):\(path)"]
+                }
+            }
+        }
+        return []
+    }
+
+    static func diagnosticMessage(from output: String) -> String {
         let lines = output
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        return lines.last ?? "Unknown error"
+        // Playlist completion/progress lines often follow the real error.
+        return lines.last(where: { $0.contains("ERROR:") })
+            ?? lines.last(where: { $0.hasPrefix("WARNING:") })
+            ?? lines.last ?? "Unknown error"
     }
 
     private static func fetchYouTubeCandidates(query: String, sourceBias: Int) async throws -> [YouTubeSearchCandidate] {

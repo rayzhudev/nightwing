@@ -54,18 +54,19 @@ public struct LyricsTranscriptionService {
     #if os(macOS)
     private let runtimeService: LyricsRuntimeService?
     #endif
-    private let canonicalLyricsService: CanonicalLyricsService
+    private let canonicalLookup: @Sendable (Track) async throws -> CanonicalLyricsService.Result?
     private let fileManager: FileManager
 
     public init(
         configuration: Configuration = Configuration(),
         modelDownloadService: LyricsModelDownloadService? = try? LyricsModelDownloadService.defaultService(),
         canonicalLyricsService: CanonicalLyricsService = CanonicalLyricsService(),
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        canonicalLookup: (@Sendable (Track) async throws -> CanonicalLyricsService.Result?)? = nil
     ) {
         self.configuration = configuration
         self.modelDownloadService = modelDownloadService
-        self.canonicalLyricsService = canonicalLyricsService
+        self.canonicalLookup = canonicalLookup ?? { try await canonicalLyricsService.lyrics(for: $0) }
         #if os(macOS)
         self.runtimeService = try? LyricsRuntimeService.defaultService(preferredPythonPath: configuration.pythonPath)
         #endif
@@ -75,72 +76,53 @@ public struct LyricsTranscriptionService {
     public func transcribe(
         track: Track,
         sourceURL: URL,
-        onModelDownloadProgress: (@Sendable (Double) -> Void)? = nil
+        lookupOnline: Bool = true,
+        onModelDownloadProgress: (@Sendable (Double) -> Void)? = nil,
+        onTranscriptionProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> LyricsDocument {
         #if os(macOS)
         try Task.checkCancellation()
-        guard let modelDownloadService else {
-            throw TranscriptionError.missingModelDownloader
-        }
-        guard let runtimeService else {
-            throw TranscriptionError.missingLocalRunner("managed runtime")
-        }
-
-        onModelDownloadProgress?(0)
-        let pythonPath = try await runtimeService.pythonPath { _ in
-            onModelDownloadProgress?(0.02)
-        }
-        try Task.checkCancellation()
-        let modelURL = try await modelDownloadService.ensureModelAvailable { progress in
-            onModelDownloadProgress?(0.05 + progress * 0.95)
-        }
-        try Task.checkCancellation()
-
-        let workingDirectory = try makeWorkingDirectory()
-        defer {
-            try? fileManager.removeItem(at: workingDirectory)
-        }
-
         let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
-        defer {
-            if didStartAccessing {
-                sourceURL.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        let outputURL = workingDirectory.appendingPathComponent("transcript.json")
-        try await runTranscription(
-            pythonPath: pythonPath,
-            audioURL: sourceURL,
-            outputURL: outputURL,
-            modelURL: modelURL
-        )
-        var lines = try decodedLines(from: outputURL)
+        defer { if didStartAccessing { sourceURL.stopAccessingSecurityScopedResource() } }
         let canonical: CanonicalLyricsService.Result?
-        do {
-            canonical = try await canonicalLyricsService.lyrics(for: track)
-        } catch {
-            try Task.checkCancellation()
+        if lookupOnline {
+            do { canonical = try await canonicalLookup(track) }
+            catch { try Task.checkCancellation(); canonical = nil }
+        } else {
             canonical = nil
         }
         try Task.checkCancellation()
-        if let canonical {
-            switch canonical {
-            case .synced(let canonicalLines):
-                lines = canonicalLines
-            case .plain(let canonicalLines):
-                lines = CanonicalLyricsService.align(canonicalLines, to: lines)
-            case .instrumental:
-                lines = [LyricsLine(
-                    startTime: 0,
-                    endTime: max(track.duration ?? 1, 1),
-                    text: "Instrumental"
-                )]
+
+        var lines: [LyricsLine]
+        var modelName = configuration.modelName
+        switch canonical {
+        case .synced(let existing):
+            lines = existing
+            modelName = "LRCLIB synced lyrics"
+        case .instrumental:
+            lines = [LyricsLine(startTime: 0, endTime: max(track.duration ?? 1, 1), text: "Instrumental")]
+            modelName = "LRCLIB instrumental"
+        default:
+            guard let modelDownloadService else { throw TranscriptionError.missingModelDownloader }
+            guard let runtimeService else { throw TranscriptionError.missingLocalRunner("managed runtime") }
+            let pythonPath = try await runtimeService.pythonPath()
+            try Task.checkCancellation()
+            let modelURL = try await modelDownloadService.ensureModelAvailable(progress: onModelDownloadProgress)
+            try Task.checkCancellation()
+            let workingDirectory = try makeWorkingDirectory()
+            defer { try? fileManager.removeItem(at: workingDirectory) }
+            let outputURL = workingDirectory.appendingPathComponent("transcript.json")
+            try await runTranscription(
+                pythonPath: pythonPath, audioURL: sourceURL, outputURL: outputURL,
+                modelURL: modelURL, progress: onTranscriptionProgress
+            )
+            lines = try decodedLines(from: outputURL)
+            if case .plain(let text) = canonical {
+                lines = CanonicalLyricsService.align(text, to: lines)
             }
         }
-        guard !lines.isEmpty else {
-            throw TranscriptionError.emptyTranscript
-        }
+        try Task.checkCancellation()
+        guard !lines.isEmpty else { throw TranscriptionError.emptyTranscript }
 
         let values = try? sourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         return LyricsDocument(
@@ -151,7 +133,7 @@ public struct LyricsTranscriptionService {
             sourceFilePath: sourceURL.standardizedFileURL.path,
             sourceFileSize: values?.fileSize.map(Int64.init),
             sourceModifiedAt: values?.contentModificationDate,
-            modelName: configuration.modelName,
+            modelName: modelName,
             transcriptionSpeed: 1,
             languageCode: configuration.languageCode,
             lines: lines
@@ -170,9 +152,10 @@ public struct LyricsTranscriptionService {
         return baseURL
     }
 
-    private func runTranscription(pythonPath: String, audioURL: URL, outputURL: URL, modelURL: URL) async throws {
+    private func runTranscription(pythonPath: String, audioURL: URL, outputURL: URL, modelURL: URL, progress: (@Sendable (Double) -> Void)?) async throws {
         let script = """
 import json
+import os
 import sys
 from faster_whisper import WhisperModel
 
@@ -193,6 +176,9 @@ segments, info = model.transcribe(
 
 rows = []
 for segment in segments:
+    with open(output_path + ".progress.tmp", "w", encoding="utf-8") as handle:
+        handle.write(str(min(max(float(segment.end) / max(float(info.duration), 0.001), 0), 1)))
+    os.replace(output_path + ".progress.tmp", output_path + ".progress")
     words = list(segment.words or [])
     if not words:
         text = segment.text.strip()
@@ -242,10 +228,17 @@ with open(output_path, "w", encoding="utf-8") as handle:
         environment["PYTHONPATH"] = nil
         process.environment = environment
 
-        let result = try await run(process)
+        progress?(0)
+        let result = try await run(process) {
+            if let value = try? String(contentsOfFile: outputURL.path + ".progress", encoding: .utf8),
+               let fraction = Double(value), fraction.isFinite {
+                progress?(min(max(fraction, 0), 1))
+            }
+        }
         guard result.exitCode == 0 else {
             throw TranscriptionError.transcriptionFailed(result.standardError)
         }
+        progress?(1)
     }
 
     private func decodedLines(from outputURL: URL) throws -> [LyricsLine] {
@@ -274,7 +267,7 @@ with open(output_path, "w", encoding="utf-8") as handle:
         }
     }
 
-    private func run(_ process: Process) async throws -> (exitCode: Int32, standardError: String) {
+    private func run(_ process: Process, pollProgress: () -> Void) async throws -> (exitCode: Int32, standardError: String) {
         let logURL = fileManager.temporaryDirectory.appendingPathComponent("nightwing-lyrics-\(UUID().uuidString).log")
         guard fileManager.createFile(atPath: logURL.path, contents: nil) else {
             throw TranscriptionError.transcriptionFailed("Could not create a transcription log.")
@@ -294,6 +287,7 @@ with open(output_path, "w", encoding="utf-8") as handle:
         do {
             while process.isRunning {
                 try Task.checkCancellation()
+                pollProgress()
                 try await Task.sleep(for: .milliseconds(100))
             }
             try Task.checkCancellation()

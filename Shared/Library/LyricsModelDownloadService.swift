@@ -2,6 +2,8 @@ import Foundation
 import CommonCrypto
 
 public actor LyricsModelDownloadService {
+    public static let defaultModelDownloadBytes: Int64 = 486_212_372
+
     public enum DownloadError: Error, LocalizedError, Sendable {
         case unableToCreateApplicationSupportDirectory
         case invalidSourceURL(String)
@@ -11,13 +13,13 @@ public actor LyricsModelDownloadService {
         public var errorDescription: String? {
             switch self {
             case .unableToCreateApplicationSupportDirectory:
-                return "Could not create the transcription model folder."
+                return "Could not create the lyrics model folder."
             case .invalidSourceURL(let value):
-                return "The transcription model download URL is invalid: \(value)"
+                return "The lyrics model download address is invalid: \(value)"
             case .downloadFailed(let message):
-                return "Could not download the transcription model: \(message)"
+                return "Could not download the lyrics model: \(message)"
             case .insufficientStorage:
-                return "There is not enough free storage to download the transcription model."
+                return "There is not enough free storage to download the lyrics model."
             }
         }
     }
@@ -27,6 +29,7 @@ public actor LyricsModelDownloadService {
         public var sourceBaseURL: URL
         public var files: [String]
         public var sha256: [String: String]
+        public var expectedFileSizes: [String: Int64]
 
         public init(
             name: String = "Systran/faster-whisper-small",
@@ -37,12 +40,23 @@ public actor LyricsModelDownloadService {
                 "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
                 "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
                 "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+            ],
+            expectedFileSizes: [String: Int64] = [
+                "config.json": 2_370,
+                "model.bin": 483_546_902,
+                "tokenizer.json": 2_203_239,
+                "vocabulary.txt": 459_861
             ]
         ) {
             self.name = name
             self.sourceBaseURL = sourceBaseURL
             self.files = files
             self.sha256 = sha256
+            self.expectedFileSizes = expectedFileSizes
+        }
+
+        public var expectedDownloadBytes: Int64 {
+            files.reduce(0) { $0 + (expectedFileSizes[$1] ?? 0) }
         }
     }
 
@@ -96,10 +110,28 @@ public actor LyricsModelDownloadService {
         directoryURL
     }
 
-    public func ensureModelAvailable(progress: (@Sendable (Double) -> Void)? = nil) async throws -> URL {
-        try Task.checkCancellation()
+    public func availableModelURL() -> URL? {
         if let validatedModelURL,
            (try? validatedModelURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            return validatedModelURL
+        }
+
+        if let cachedModelURL = huggingFaceCachedModelDirectory() {
+            validatedModelURL = cachedModelURL
+            return cachedModelURL
+        }
+
+        if isModelComplete() {
+            validatedModelURL = directoryURL
+            return directoryURL
+        }
+
+        return nil
+    }
+
+    public func ensureModelAvailable(progress: (@Sendable (Double) -> Void)? = nil) async throws -> URL {
+        try Task.checkCancellation()
+        if let validatedModelURL = availableModelURL() {
             progress?(1)
             return validatedModelURL
         }
@@ -212,29 +244,35 @@ public actor LyricsModelDownloadService {
             throw DownloadError.insufficientStorage
         }
 
-        for (index, fileName) in manifest.files.enumerated() {
+        let expectedDownloadBytes = max(manifest.expectedDownloadBytes, 1)
+        var completedExpectedBytes: Int64 = 0
+        for fileName in manifest.files {
             try Task.checkCancellation()
             let destinationURL = directoryURL.appendingPathComponent(fileName)
+            let expectedFileBytes = manifest.expectedFileSizes[fileName] ?? 0
             if isValidModelFile(at: destinationURL, named: fileName) {
+                completedExpectedBytes += expectedFileBytes
                 reportProvisioningProgress(
-                    Double(index + 1) / Double(manifest.files.count),
+                    Double(completedExpectedBytes) / Double(expectedDownloadBytes),
                     id: provisioningID
                 )
                 continue
             }
 
-            let fileCount = manifest.files.count
+            let completedBeforeFile = completedExpectedBytes
             try await download(fileName: fileName, to: destinationURL) { fileProgress in
                 Task {
                     await self.reportProvisioningProgress(
-                        (Double(index) + fileProgress) / Double(fileCount),
+                        Double(completedBeforeFile) / Double(expectedDownloadBytes) +
+                            fileProgress * Double(expectedFileBytes) / Double(expectedDownloadBytes),
                         id: provisioningID
                     )
                 }
             }
             try Task.checkCancellation()
+            completedExpectedBytes += expectedFileBytes
             reportProvisioningProgress(
-                Double(index + 1) / Double(manifest.files.count),
+                Double(completedExpectedBytes) / Double(expectedDownloadBytes),
                 id: provisioningID
             )
         }

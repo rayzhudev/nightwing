@@ -79,6 +79,13 @@
 		1A000005000000000000000F /* Icon-1024.png in Resources */ = {isa = PBXBuildFile; fileRef = 1A000005000000000000001F /* Icon-1024.png */; };
 		1A0000070000000000000001 /* LyricsFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000070000000000000011 /* LyricsFeatureTests.swift */; };
 		1A0000070000000000000002 /* CoreRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000070000000000000012 /* CoreRegressionTests.swift */; };
+		1A0000080000000000000001 /* MusicServiceConnections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000080000000000000011 /* MusicServiceConnections.swift */; };
+		1B0000090000000000000101 /* NightwingAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000090000000000000001 /* NightwingAppModel.swift */; };
+		1B0000090000000000000201 /* NightwingAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000090000000000000001 /* NightwingAppModel.swift */; };
+		1B0000090000000000000102 /* LyricsGenerationQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000090000000000000002 /* LyricsGenerationQueue.swift */; };
+		1B0000090000000000000202 /* LyricsGenerationQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000090000000000000002 /* LyricsGenerationQueue.swift */; };
+		1B0000090000000000000103 /* WatchedFolderMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000090000000000000003 /* WatchedFolderMonitor.swift */; };
+		1B0000090000000000000203 /* WatchedFolderMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000090000000000000003 /* WatchedFolderMonitor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -144,7 +151,11 @@
 		1A000005000000000000001F /* Icon-1024.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Icon-1024.png"; sourceTree = "<group>"; };
 		1A0000070000000000000011 /* LyricsFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsFeatureTests.swift; sourceTree = "<group>"; };
 		1A0000070000000000000012 /* CoreRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreRegressionTests.swift; sourceTree = "<group>"; };
+		1A0000080000000000000011 /* MusicServiceConnections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicServiceConnections.swift; sourceTree = "<group>"; };
 		1A00000700000000000000F1 /* NightwingTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightwingTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1B0000090000000000000001 /* NightwingAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightwingAppModel.swift; sourceTree = "<group>"; };
+		1B0000090000000000000002 /* LyricsGenerationQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsGenerationQueue.swift; sourceTree = "<group>"; };
+		1B0000090000000000000003 /* WatchedFolderMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchedFolderMonitor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -225,7 +236,11 @@
 		1A0000030000000000000031 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				1B0000090000000000000003 /* WatchedFolderMonitor.swift */,
+				1B0000090000000000000002 /* LyricsGenerationQueue.swift */,
+				1B0000090000000000000001 /* NightwingAppModel.swift */,
 				1A0000040000000000000011 /* Assets.xcassets */,
+				1A0000080000000000000011 /* MusicServiceConnections.swift */,
 				1A0000030000000000000032 /* Models */,
 				1A0000030000000000000033 /* Playback */,
 				1A0000030000000000000034 /* Library */,
@@ -494,6 +509,9 @@
 				1A000003000000000000101E /* JSONLocalLibraryStore.swift in Sources */,
 				1A0000030000000000001023 /* LyricsSidecarStore.swift in Sources */,
 				1A000003000000000000101F /* NightwingReusableViews.swift in Sources */,
+				1B0000090000000000000103 /* WatchedFolderMonitor.swift in Sources */,
+				1B0000090000000000000102 /* LyricsGenerationQueue.swift in Sources */,
+				1B0000090000000000000101 /* NightwingAppModel.swift in Sources */,
 				1A0000030000000000001020 /* NightwingSampleData.swift in Sources */,
 				1A0000030000000000001021 /* URL+NightwingLibrary.swift in Sources */,
 			);
@@ -505,6 +523,7 @@
 			files = (
 				1A0000020000000000000001 /* NightwingMacApp.swift in Sources */,
 				1A0000020000000000000002 /* MacRootView.swift in Sources */,
+				1A0000080000000000000001 /* MusicServiceConnections.swift in Sources */,
 				1A0000030000000000002011 /* LibraryAvailability.swift in Sources */,
 				1A0000030000000000002012 /* Track.swift in Sources */,
 				1A0000030000000000002013 /* Album.swift in Sources */,
@@ -526,6 +545,9 @@
 				1A000003000000000000201E /* JSONLocalLibraryStore.swift in Sources */,
 				1A0000030000000000002023 /* LyricsSidecarStore.swift in Sources */,
 				1A000003000000000000201F /* NightwingReusableViews.swift in Sources */,
+				1B0000090000000000000203 /* WatchedFolderMonitor.swift in Sources */,
+				1B0000090000000000000202 /* LyricsGenerationQueue.swift in Sources */,
+				1B0000090000000000000201 /* NightwingAppModel.swift in Sources */,
 				1A0000030000000000002020 /* NightwingSampleData.swift in Sources */,
 				1A0000030000000000002021 /* URL+NightwingLibrary.swift in Sources */,
 				1A0000060000000000002001 /* OnlineSearchResult.swift in Sources */,

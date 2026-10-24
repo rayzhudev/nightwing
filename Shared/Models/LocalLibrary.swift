@@ -30,6 +30,7 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
     public var playbackResumeState: PlaybackResumeState?
     public var playbackProfiles: [PlaybackProfile]
     public var selectedPlaybackProfileName: String?
+    public var removedImportedTrackPaths: Set<String>?
     public var schemaVersion: Int
 
     public init(
@@ -40,6 +41,7 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
         playbackResumeState: PlaybackResumeState? = nil,
         playbackProfiles: [PlaybackProfile] = [.normal, .nightcore],
         selectedPlaybackProfileName: String? = nil,
+        removedImportedTrackPaths: Set<String>? = nil,
         schemaVersion: Int = 1
     ) {
         self.tracks = tracks
@@ -49,6 +51,7 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
         self.playbackResumeState = playbackResumeState
         self.playbackProfiles = playbackProfiles
         self.selectedPlaybackProfileName = selectedPlaybackProfileName
+        self.removedImportedTrackPaths = removedImportedTrackPaths
         self.schemaVersion = schemaVersion
     }
 
@@ -143,8 +146,46 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
         }
         for index in playlists.indices {
             playlists[index].items.removeAll { $0.trackID == trackID }
+            if playlists[index].importedItems != nil {
+                for importedIndex in playlists[index].importedItems!.indices
+                where playlists[index].importedItems![importedIndex].matchedTrackID == trackID {
+                    playlists[index].importedItems![importedIndex].matchedTrackID = nil
+                }
+            }
             playlists[index].dateModified = Date()
         }
+    }
+
+    public mutating func removeImportedTracks(_ importedTracks: [Track]) {
+        guard !importedTracks.isEmpty else { return }
+
+        var removedPaths = removedImportedTrackPaths ?? []
+        removedPaths.formUnion(importedTracks.map { Self.standardizedPath(for: $0.fileURL) })
+        removedImportedTrackPaths = removedPaths
+
+        for track in importedTracks {
+            deleteTrack(id: track.id)
+        }
+    }
+
+    public mutating func restoreImports(for importedTracks: [Track]) {
+        guard var removedPaths = removedImportedTrackPaths else { return }
+        removedPaths.subtract(importedTracks.map { Self.standardizedPath(for: $0.fileURL) })
+        removedImportedTrackPaths = removedPaths.isEmpty ? nil : removedPaths
+    }
+
+    public func excludingRemovedImports(from importedTracks: [Track]) -> [Track] {
+        guard let removedImportedTrackPaths, !removedImportedTrackPaths.isEmpty else {
+            return importedTracks
+        }
+
+        return importedTracks.filter {
+            !removedImportedTrackPaths.contains(Self.standardizedPath(for: $0.fileURL))
+        }
+    }
+
+    private static func standardizedPath(for fileURL: URL) -> String {
+        fileURL.standardizedFileURL.path
     }
 
     public mutating func upsertFolderSource(_ folderSource: FolderSource) {
@@ -173,6 +214,37 @@ public struct LocalLibrary: Codable, Equatable, Sendable {
 
     public mutating func deletePlaylist(id: Playlist.ID) {
         playlists.removeAll { $0.id == id }
+    }
+
+    @discardableResult
+    public mutating func upsertImportedPlaylist(
+        name: String,
+        source: PlaylistImportSource,
+        importedItems: [ImportedPlaylistItem]
+    ) -> Playlist {
+        let playlistItems = importedItems.compactMap { importedItem in
+            importedItem.matchedTrackID.map { PlaylistItem(trackID: $0) }
+        }
+
+        if let index = playlists.firstIndex(where: {
+            $0.importSource?.service == source.service && $0.importSource?.externalID == source.externalID
+        }) {
+            playlists[index].name = name
+            playlists[index].items = playlistItems
+            playlists[index].importSource = source
+            playlists[index].importedItems = importedItems
+            playlists[index].dateModified = Date()
+            return playlists[index]
+        }
+
+        let playlist = Playlist(
+            name: name,
+            items: playlistItems,
+            importSource: source,
+            importedItems: importedItems
+        )
+        playlists.append(playlist)
+        return playlist
     }
 
     public mutating func addTrack(_ trackID: Track.ID, toPlaylist playlistID: Playlist.ID) {
