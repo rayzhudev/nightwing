@@ -182,6 +182,9 @@ final class NightwingAppModel: ObservableObject {
             self.queuedLyricsTrackIDs = self.lyricsQueue.pendingIDs
             self.activeLyricsTrackID = self.lyricsQueue.activeID
         }
+        // XCTest hosts exercise services explicitly. Do not start app-wide scans,
+        // playback restoration or persistence as a side effect of hosting tests.
+        guard !NightwingEnvironment.isTestHost else { return }
         observePlaybackState()
         Task {
             await loadLibrary()
