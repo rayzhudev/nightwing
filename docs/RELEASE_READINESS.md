@@ -1,35 +1,35 @@
-## 0.3.0 (3) public-beta readiness
+## 0.3.0 (3) Developer Preview readiness
 
-Target: direct Developer ID signed/notarized universal macOS 26+ ZIP. No App Store/TestFlight work and no publication is authorised by this preparation task.
+**GO for a GitHub prerelease draft only**, using the exact wrapper/checksum in [DEVELOPER_PREVIEW.md](DEVELOPER_PREVIEW.md) and the proposed [public release body](GITHUB_PREVIEW_RELEASE.md). No release, tag, upload, push, distribution or other public external write has been performed. Publishing requires separate authorisation.
 
-### Source preparation completed
+### Verified preparation
 
-- [x] Validated audit: old 0.2.0 ZIP/version did not match the substantial source delta.
-- [x] New 0.3.0 (3) version/build and source-based release notes from 1947ebd to 695d0ed plus beta hardening.
-- [x] Public and bundled offline-readable privacy/network/retention, install/backup/recovery/uninstall, licence-positioning and attribution documents; Settings > Privacy & Help.
-- [x] Precise historical yt-dlp binary provenance and GPLv3+ combined-work issue identified. Removed from current tree/distributable rather than inventing a legal source offer. Optional user-installed tools are documented; stale prepared copies are not used.
-- [x] Tests/QA use isolated library, preferences, model cache and no real Keychain accounts. Shared Xcode test scheme sets isolation before launch.
-- [x] 41 tests passed on Apple Silicon (18 XCTest + 23 Swift Testing), including missing-primary restoration, orphaned-backup protection, corrupt-library preservation/backup, missing-file bookmarks, playlist refresh, queue behavior, folder notifications, model integrity, offline lyric/service errors, local-only lyric bypass, OAuth user denial/task cancellation, Google revocation attempt and disconnect/late-result handling.
-- [x] Development clean-profile smoke passed: actual WAV import/audio-engine playback/progress/pause/seek/stop, missing/corrupt audio errors and subsequent recovery, persistence/backup recovery, real runtime provisioning, pinned model download/hash verification and local model inference.
-- [x] Removed developer-specific OpenClaw Python fallback. New managed Python/cache provisioning remains under the runtime directory. Append-only install logs preserve provenance.
-- [x] Release pipeline requires clean Git, embeds final source commit, uses fresh Derived Data, checks universal architectures/docs/signatures/hardened runtime, submits to Apple, staples and reassesses the exact extracted ZIP only after acceptance; failed notarization preserves a clearly labelled QA-only candidate.
-- [x] Repeatable exact-candidate verifier includes FLAC/M4A/AIFF decode fixtures, network-denied core smoke, and (after notarization) quarantined Launch Services launch. No system networking or real library is changed.
+- [x] Existing app source commit `4fbd91edb888c477eecd57f5a3c4fefd5fa3546f`, version 0.3.0 (3), original ZIP SHA-256 pinned.
+- [x] Valid timestamped Developer ID Application signature (Ray Zhu, team 6G8K3FNTVJ), hardened runtime, macOS 26.0+ arm64/x86_64 slices; no bundled yt-dlp.
+- [x] Expected actual state checked: **not notarized, no stapled ticket, Gatekeeper rejected as Unnotarized Developer ID**.
+- [x] Preview wrapper includes unchanged signed app plus current external install/first-open, privacy/network/retention, backup/recovery/uninstall, licence, attribution and release documentation.
+- [x] Preview disclosures explicitly supersede obsolete notarized-install wording inside the sealed app. No rebuild or resign; exact extracted app bytes/modes and signature verified against the original.
+- [x] SHA-256 sidecar uses the preview ZIP basename. Exact preview hash appears in manifest and proposed release body. Generated evidence: `dist/DEVELOPER-PREVIEW-VERIFICATION.json`.
+- [x] GitHub-only opt-in prerelease positioning, externally installed online tools, best-effort issue path, no updater/production-readiness claim.
 
-### External blocker found on 29 October 2026
+### Completed audit/remediation, not rerun in this documentation/package task
 
-Apple notarytool using the existing nightwing-notary profile returns HTTP 403: “A required agreement is missing or has expired.” The Developer ID signing identity is available. The account/team owner must sign the required current Apple Developer agreement in the Apple developer account. This task does not accept legal agreements on the owner's behalf.
+- Historical downloader identified as upstream GPLv3+ combined work; removed from source/distribution instead of inventing a corresponding-source offer. Current optional user-installed yt-dlp/ffmpeg/runtime requirements are disclosed.
+- Isolated test preferences/support/model paths and no real Keychain accounts; XCTest hosts do not start app-wide background library work. 41 tests passed (18 XCTest + 23 Swift Testing).
+- Exact signed original candidate: native arm64 and Rosetta x86_64 core smoke, outbound-network-denied local acceptance, WAV/AIFF/FLAC/M4A decode, real playback/progress/pause/seek/stop, missing/corrupt audio and library recovery passed.
+- Fresh isolated profile: managed Python 3.12.13, faster-whisper 1.2.1, pinned model/hash checks and local inference passed. Evidence remains in ignored `dist/verification-20261029T130210Z/`.
+- Earlier private QA incident is recorded in `dist/QA-NOTES.md`; do not claim the earlier audit never touched the real library. This preview preparation does not launch the app or access/change user library data.
 
-- [ ] Apple team agreement restored; notarization accepted.
-- [ ] Ticket stapled/validated and exact final ZIP accepted by Gatekeeper (including quarantined launch).
+### Explicit limits / manual acceptance
 
-Until these pass, this is NOT a distributable public beta. The canonical final ZIP is created only after successful notarization. A `*-UNNOTARIZED-RC.zip` is QA-only, regardless of successful local smoke checks. Post-commit signature/hash/codec/offline/provisioning results are stored beside the candidate in ignored dist/ verification evidence, not inferred from this checklist.
+- [ ] Actual quarantined Finder launch and System Settings > Privacy & Security > Open Anyway interaction. Documented procedure is not claimed as observed.
+- [ ] Physical Intel hardware / all output devices and codecs (Rosetta is not physical Intel).
+- [ ] Real Google/Spotify sign-in with bring-your-own developer clients and provider-side revocation confirmation.
 
-### Explicit beta caveats, not claimed as tested
+These are disclosed preview limitations, not passed production acceptance gates. Runtime transitive dependencies are version-bounded but not fully locked. Online functionality depends on upstream services/tools. No provider approval or project-wide open-source licence is claimed.
 
-Real Google/Spotify sign-in with the user's own developer clients, provider-side revocation confirmation, every codec/output device, and execution on physical Intel hardware remain manual acceptance items. Automated OAuth tests use dummy tokens and local/mock responses, never Ray's accounts. Clean-profile isolation is not a separate macOS user account. No provider application approval, automatic updater, fully locked runtime dependency graph, or project-wide open-source licence is claimed. Online features require connectivity and provider/tool compatibility; local playback works offline.
+### Separate future notarized-release path
 
-### Finish and publication boundary
+Apple notarytool previously returned HTTP 403 because a required developer agreement is missing/expired. No agreement, account, identity or credentials were changed here. `./Rebuild Nightwing.command --release` remains the future clean-commit signed/notarized release builder, not the preview packaging command. After an authorised owner resolves that issue, a new accepted/stapled candidate and exact quarantined Gatekeeper/Launch Services verification are required before claiming a notarized release. The existing `scripts/verify-candidate.sh` compares current bundled docs and is for a newly built candidate; do not use it to reinterpret the unchanged historical preview app as notarized or document-current.
 
-After the Apple agreement is resolved, from the clean final commit run `./Rebuild Nightwing.command --release`, then `./scripts/verify-candidate.sh dist/Nightwing-macOS.zip --provision`. Inspect dist/RELEASE-VERIFICATION.json, notary-result.json, checksum and verification evidence; require all acceptance states to pass. Do not reuse the older 0.2.0 ZIP.
-
-Ray would then need to explicitly authorise: **publish the verified 0.3.0 (3) notarized ZIP, its matching SHA-256 file and public release/privacy/prerequisite documents to the chosen public release destination** (for example a GitHub prerelease). No upload/public release is performed by these scripts. A general preparation request does not authorise that publication.
+Before any eventual external action, verify the exact local preview checksum, inspect the proposed release body/asset boundary, and keep the GitHub release **draft/prerelease, not latest production** as authorised. Do not upload private QA artifacts or the bare original RC ZIP.

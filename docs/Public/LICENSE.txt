@@ -1,5 +1,5 @@
-Nightwing public beta licence positioning
+Nightwing Developer Preview licence positioning
 
-No project-wide open-source licence has been declared by the copyright holder. Source visibility alone is not a grant to redistribute, sublicense, or relicense Nightwing. This beta is intended for installation and evaluation by its recipients; publication and any broader licensing grant remain subject to the owner's authorisation. No warranty or production-support commitment is made for this beta.
+No project-wide open-source licence has been declared by the copyright holder. Source visibility alone is not a grant to redistribute, sublicense, or relicense Nightwing. This preview is intended for installation and evaluation by its recipients; publication and any broader licensing grant remain subject to the owner's authorisation. No warranty or production-support commitment is made for this preview.
 
 Third-party software, service content and trademarks remain subject to their respective owners' rights and terms. The optional components listed in THIRD_PARTY_NOTICES.md are not relicensed by Nightwing. This statement does not claim ownership of music, lyrics, model weights, or third-party artwork.

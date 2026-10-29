@@ -2,6 +2,8 @@
 
 Nightwing is a local-first music player for macOS and iPhone with first-class Nightcore playback. The default Nightcore preset plays at `sqrt(2)` speed with pitch linked to speed, producing a +6 semitone lift; speed and pitch can also be adjusted independently.
 
+> **Developer Preview — GitHub only.** The 0.3.0 (3) candidate is Developer ID signed but **not notarized**. Gatekeeper blocks first open. This is an opt-in evaluation build, not a production-ready release. Read the [exact candidate and distribution notes](docs/DEVELOPER_PREVIEW.md) and [first-open instructions](docs/Public/INSTALL.md) before installing.
+
 ## Features
 
 - Local libraries with albums, playlists, queue management, watched folders, and support for formats including FLAC.
@@ -24,7 +26,7 @@ Open `Nightwing.xcodeproj` in Xcode and run either the `Nightwing macOS` or `Nig
 
 For the normal macOS development loop, double-click `Rebuild Nightwing.command`. It builds a fresh Debug app, replaces the repository-local `Nightwing.app`, and launches it.
 
-Public beta 0.3.0 does not bundle yt-dlp. Online downloads/playback require a separately installed yt-dlp, ffmpeg/ffprobe and supported JavaScript runtime (for example `brew install yt-dlp ffmpeg deno` with an existing Homebrew installation). Nightwing automatically enables an installed Deno or Node runtime, including standard Homebrew paths when launched from Finder. Use a runtime supported by [yt-dlp's JavaScript setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS); audio extraction also requires ffmpeg. Old prepared helpers are not used by this beta.
+Developer Preview 0.3.0 does not bundle yt-dlp. Online downloads/playback require a separately installed yt-dlp, ffmpeg/ffprobe and supported JavaScript runtime (for example `brew install yt-dlp ffmpeg deno` with an existing Homebrew installation). Nightwing automatically enables an installed Deno or Node runtime, including standard Homebrew paths when launched from Finder. Use a runtime supported by [yt-dlp's JavaScript setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS); audio extraction also requires ffmpeg. Old prepared helpers are not used by this preview.
 
 ## Playlist service setup
 
@@ -39,9 +41,11 @@ OAuth access and refresh tokens are stored in the macOS Keychain as device-only 
 
 ## Distribution
 
-`./Rebuild Nightwing.command --release` creates a Developer ID signed and notarized macOS build, validates bundled documentation and rejects a stale bundled downloader, and writes the distributable archive to `dist/Nightwing-macOS.zip`.
+The current plan is a **GitHub Releases prerelease only**, with no App Store, TestFlight, automatic updater, or other distribution channel. Nothing has been uploaded or published by this preparation.
 
-The release path requires the configured Developer ID certificate and the `nightwing-notary` keychain profile. Generated apps, Derived Data, and `dist/` are intentionally ignored by Git.
+The [Developer Preview manifest](docs/DEVELOPER_PREVIEW.md) identifies the exact 0.3.0 (3) signed, unnotarized app and its checksums. `python3 scripts/package-developer-preview.py` locally wraps that existing candidate with current documentation; it does not rebuild, resign, submit to Apple, or publish anything. The sealed app is unchanged. Its older in-app install guide incorrectly describes the intended notarized release: the external **READ-FIRST.md** and **Documentation/INSTALL.md** in the preview package supersede it.
+
+`./Rebuild Nightwing.command --release` is the separate **future notarized-release** pipeline. It attempts Developer ID signing and Apple notarization and produces `dist/Nightwing-macOS.zip` only on success; it is **not** how this preview was prepared. The existing Apple notary profile is blocked by a developer-agreement error. No accepted notarization or stapled ticket is claimed for this preview.
 
 See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the original product and technical plan.
 
@@ -53,7 +57,7 @@ See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the original 
 - macOS watched folders use recursive filesystem notifications with debouncing. A five-minute reconciliation scan remains as a fallback; iPhone uses the periodic fallback.
 - Account disconnect invalidates pending requests. Playlist refresh errors keep the account connected and expose a retry action.
 
-## Public beta documentation
+## Developer Preview documentation
 
 - [Release notes](docs/Public/RELEASE_NOTES.md)
 - [Privacy, network access and retention](docs/Public/PRIVACY.md)
@@ -62,7 +66,7 @@ See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the original 
 - [Install, prerequisites, backup, recovery and uninstall](docs/Public/INSTALL.md)
 - [Release-readiness checklist](docs/RELEASE_READINESS.md)
 
-All public documents ship inside the app and are readable in Settings > Privacy & Help, without a network connection. Online lyric lookup defaults off for new profiles. The direct ZIP is a universal macOS 26+ beta. No public service OAuth client or automatic updater is provided.
+Current public documents accompany the preview ZIP in Documentation/. The unchanged signed app also contains the earlier audit documents in Settings > Privacy & Help; their notarized-install wording is obsolete for this preview. Online lyric lookup defaults off for new profiles. Supported deployment target: macOS 26+ on Apple Silicon and Intel (universal binary). Native Apple Silicon and Rosetta were tested; physical Intel hardware was not. No iPhone binary, public service OAuth client, or automatic updater is provided.
 
 ### Isolated verification
 

@@ -1,6 +1,6 @@
 ## Privacy, network access and retention
 
-Applies to Nightwing macOS 0.3.0 public beta, 29 October 2026.
+Applies to Nightwing macOS 0.3.0 Developer Preview, 29 October 2026.
 
 Nightwing is a local-first player. It has no Nightwing account, advertising SDK, telemetry SDK, or developer-operated upload server in this build. Local playback and imports do not require a network connection. macOS and third-party services may collect their own diagnostics; this statement does not set their retention policies.
 
