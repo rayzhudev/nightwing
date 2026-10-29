@@ -12,7 +12,7 @@ Optional transcription downloads a model and may provision a private Python engi
 
 Quit Nightwing before copying data. Back up the entire ~/Library/Application Support/Nightwing directory, the com.rayzhu.nightwing.macos preferences domain, and original music folders separately. The library references original audio paths; copying the JSON alone is not an audio backup. Keychain credentials do not migrate with this directory; reconnect accounts on the new Mac. Restore into a quit app, preserve the old directory, then relaunch. File bookmarks/path changes may require reimporting missing originals.
 
-If LocalLibrary.json is corrupt, Nightwing restores a valid LocalLibrary.json.backup and preserves the unreadable original. If neither can be read, saving is blocked. Quit, preserve both files, restore a known-good backup, reopen and Retry. Do not delete the unreadable library to silence an error unless you deliberately want a fresh library. Missing originals are marked missing; reattach the disk or reimport their new location. Playback errors do not erase your library.
+If LocalLibrary.json is missing, Nightwing restores a valid backup instead of opening a fresh library. If LocalLibrary.json is corrupt, Nightwing restores a valid LocalLibrary.json.backup and preserves the unreadable original. If neither can be read, saving is blocked. Quit, preserve both files, restore a known-good backup, reopen and Retry. Do not delete the unreadable library to silence an error unless you deliberately want a fresh library. Missing originals are marked missing; reattach the disk or reimport their new location. Playback errors do not erase your library.
 
 ### Uninstall / erase local data
 

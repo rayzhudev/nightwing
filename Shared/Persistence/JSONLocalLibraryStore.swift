@@ -78,6 +78,17 @@ public actor JSONLocalLibraryStore {
 
     public func load() throws -> LocalLibrary {
         guard fileManager.fileExists(atPath: fileURL.path) else {
+            if fileManager.fileExists(atPath: backupURL.path) {
+                savingBlocked = true
+                guard let data = try? Data(contentsOf: backupURL),
+                      let recovered = try? decoder.decode(LocalLibrary.self, from: data) else {
+                    throw StoreError.recoveryRequired
+                }
+                try data.write(to: fileURL, options: .atomic)
+                savingBlocked = false
+                recoveryNotice = "Restored the missing library file from its validated backup."
+                return recovered
+            }
             guard !savingBlocked else { throw StoreError.recoveryRequired }
             return .empty
         }
@@ -117,6 +128,12 @@ public actor JSONLocalLibraryStore {
             }
             try previous.write(to: backupURL, options: .atomic)
         } else {
+            // A missing primary with an existing backup must be recovered by load(),
+            // never silently replaced by a fresh/empty library on first save.
+            guard !fileManager.fileExists(atPath: backupURL.path) else {
+                savingBlocked = true
+                throw StoreError.recoveryRequired
+            }
             try data.write(to: backupURL, options: .atomic)
         }
         try data.write(to: fileURL, options: .atomic)

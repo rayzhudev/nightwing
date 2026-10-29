@@ -14,7 +14,7 @@ Nightwing is a local-first player. It has no Nightwing account, advertising SDK,
 
 ### What stays on your Mac
 
-Library metadata, file paths/bookmarks, play history/counts, queue, imported playlist metadata/source links, downloaded media/artwork, lyrics sidecars, and model/runtime files are kept under ~/Library/Application Support/Nightwing. Original imports are referenced in place and not rewritten. Preferences (including recent searches and client IDs) are kept in the app's macOS preferences domain. Temporary conversion audio and runtime-install logs can be created locally; partial downloads can remain after interrupted operations. A pre-existing Hugging Face cache or compatible locally installed Python environment may be reused.
+Library metadata, file paths/bookmarks, play history/counts, queue, imported playlist metadata/source links, downloaded media/artwork, lyrics sidecars, and model/runtime files are kept under ~/Library/Application Support/Nightwing. Original imports are referenced in place and not rewritten. Preferences (including recent searches and client IDs) are kept in the app's macOS preferences domain. Temporary transcription scripts/results and runtime-install logs can be created locally; partial downloads can remain after interrupted operations. A pre-existing Hugging Face cache or compatible locally installed Python environment may be reused.
 
 There is no automatic retention deadline. Data persists until you remove it or uninstall it explicitly. Removing an app alone does not remove its data, Keychain entries, external tools, or external caches. Library recovery may keep LocalLibrary.json.backup and unreadable-* copies; include these in your deletion/backup choices. Recent searches can be cleared in Settings > General.
 

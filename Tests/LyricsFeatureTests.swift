@@ -232,6 +232,36 @@ struct ReliabilityTests {
         #expect(try await store.load().tracks.count == 1)
     }
 
+    @Test func missingPrimaryRestoresValidatedBackup() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.json")
+        let store = JSONLocalLibraryStore(fileURL: url)
+        var library = LocalLibrary.empty
+        library.upsertTracks([Track(fileURL: URL(fileURLWithPath: "/tmp/saved.wav"), title: "Preserved", fileType: .wav)])
+        try await store.save(library)
+        try FileManager.default.removeItem(at: url)
+        #expect(try await store.load().tracks.first?.title == "Preserved")
+        #expect(await store.recoveryNotice != nil)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func orphanedInvalidBackupIsNotOverwrittenByFreshSave() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.json")
+        let backup = url.appendingPathExtension("backup")
+        let broken = Data("preserve this backup".utf8)
+        try broken.write(to: backup)
+        let store = JSONLocalLibraryStore(fileURL: url)
+        await #expect(throws: JSONLocalLibraryStore.StoreError.self) { try await store.load() }
+        let fresh = JSONLocalLibraryStore(fileURL: url)
+        await #expect(throws: JSONLocalLibraryStore.StoreError.self) { try await fresh.save(.empty) }
+        #expect(try Data(contentsOf: backup) == broken)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test func unreadableLibraryCannotBeOverwrittenWithoutRecovery() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
