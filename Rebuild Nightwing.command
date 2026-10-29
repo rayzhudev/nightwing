@@ -18,7 +18,6 @@ RELEASE_YTDLP_PATH="$RELEASE_APP_PATH/Contents/Resources/yt-dlp"
 FINAL_ZIP_PATH="$RELEASE_ROOT/Nightwing-macOS.zip"
 FINAL_ZIP_CHECKSUM_PATH="$FINAL_ZIP_PATH.sha256"
 RELEASE_TEMP_DIR=""
-RELEASE_YTDLP_ENTITLEMENTS_PATH=""
 RELEASE_VERIFY_ROOT=""
 NOTARY_UPLOAD_ZIP_PATH=""
 
@@ -81,12 +80,6 @@ build_release() {
     return 1
   fi
 
-  if [[ ! -f "$PROJECT_DIR/Shared/Resources/yt-dlp" ]]; then
-    echo "Missing required bundled helper:"
-    echo "$PROJECT_DIR/Shared/Resources/yt-dlp"
-    return 1
-  fi
-
   if ! security find-identity -v -p codesigning | grep -F "$DEVELOPER_ID_IDENTITY" >/dev/null; then
     echo "Missing signing identity:"
     echo "$DEVELOPER_ID_IDENTITY"
@@ -96,7 +89,7 @@ build_release() {
   fi
 
   RELEASE_TEMP_DIR="$(mktemp -d /private/tmp/nightwing-release.XXXXXX)"
-  RELEASE_YTDLP_ENTITLEMENTS_PATH="$RELEASE_TEMP_DIR/yt-dlp.entitlements"
+  RELEASE_DERIVED_DATA_DIR="$RELEASE_TEMP_DIR/DerivedData"
   RELEASE_VERIFY_ROOT="$RELEASE_TEMP_DIR/final-zip"
   NOTARY_UPLOAD_ZIP_PATH="$RELEASE_TEMP_DIR/Nightwing-notary-upload.zip"
   trap 'cleanup_release_temp' EXIT
@@ -145,42 +138,17 @@ build_release() {
   fi
   echo "Release binary includes Apple Silicon and Intel architectures."
 
-  echo
-  echo "Signing bundled executable resources..."
-  if [[ ! -f "$RELEASE_YTDLP_PATH" ]]; then
-    echo "Archive is missing required bundled helper:"
-    echo "$RELEASE_YTDLP_PATH"
+  # The historical upstream PyInstaller helper is GPLv3+ with corresponding-source
+  # obligations. Public beta uses optional user-installed tools, never that binary.
+  if [[ -e "$RELEASE_YTDLP_PATH" ]]; then
+    echo "Unexpected bundled yt-dlp: refusing to redistribute a stale helper."
     return 1
   fi
-
-  cat > "$RELEASE_YTDLP_ENTITLEMENTS_PATH" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>com.apple.security.cs.disable-library-validation</key>
-  <true/>
-</dict>
-</plist>
-PLIST
-
-  chmod +x "$RELEASE_YTDLP_PATH"
-  codesign \
-    --force \
-    --options runtime \
-    --entitlements "$RELEASE_YTDLP_ENTITLEMENTS_PATH" \
-    --timestamp \
-    --sign "$DEVELOPER_ID_IDENTITY" \
-    "$RELEASE_YTDLP_PATH"
-  codesign --verify --strict --verbose=2 "$RELEASE_YTDLP_PATH"
-
-  local signed_ytdlp_version
-  signed_ytdlp_version="$("$RELEASE_YTDLP_PATH" --version)"
-  if [[ -z "$signed_ytdlp_version" ]]; then
-    echo "The signed yt-dlp helper did not report a version."
-    return 1
-  fi
-  echo "Signed yt-dlp helper is runnable (version $signed_ytdlp_version)."
+  local source_commit="$(git rev-parse HEAD)"
+  /usr/libexec/PlistBuddy -c "Add :NightwingSourceCommit string $source_commit" "$RELEASE_APP_PATH/Contents/Info.plist"
+  for document in PRIVACY.md THIRD_PARTY_NOTICES.md LICENSE.txt INSTALL.md RELEASE_NOTES.md; do
+    cmp "$PROJECT_DIR/docs/Public/$document" "$RELEASE_APP_PATH/Contents/Resources/Public/$document"
+  done
 
   echo
   echo "Refreshing Developer ID signature..."
@@ -194,13 +162,23 @@ PLIST
   codesign --verify --deep --strict --verbose=2 "$RELEASE_APP_PATH"
 
   echo
+  codesign -dvv "$RELEASE_APP_PATH" 2>&1 | grep -F "runtime"
   echo "Preparing notarization upload..."
   ditto -c -k --keepParent "$RELEASE_APP_PATH" "$NOTARY_UPLOAD_ZIP_PATH"
 
   echo "Submitting to Apple notary service..."
-  xcrun notarytool submit "$NOTARY_UPLOAD_ZIP_PATH" \
+  if ! xcrun notarytool submit "$NOTARY_UPLOAD_ZIP_PATH" \
     --keychain-profile "$NOTARY_PROFILE" \
-    --wait
+    --wait --output-format json > "$RELEASE_ROOT/notary-result.json" 2> "$RELEASE_ROOT/notary-error.txt"; then
+    local blocked_zip="$RELEASE_ROOT/Nightwing-${release_version}-b${release_build}-UNNOTARIZED-RC.zip"
+    ditto -c -k --keepParent "$RELEASE_APP_PATH" "$blocked_zip"
+    shasum -a 256 "$blocked_zip" > "$blocked_zip.sha256"
+    printf '{"sourceCommit":"%s","version":"%s","build":"%s","notarization":"blocked","distributionReady":false}\n' "$source_commit" "$release_version" "$release_build" > "$RELEASE_ROOT/RELEASE-VERIFICATION.json"
+    echo "Notarization failed. Signed QA-only candidate preserved (NOT for distribution): $blocked_zip"
+    cat "$RELEASE_ROOT/notary-error.txt"
+    return 1
+  fi
+  [[ "$(plutil -extract status raw -o - "$RELEASE_ROOT/notary-result.json")" == "Accepted" ]]
 
   echo
   echo "Stapling notarization ticket..."
@@ -220,8 +198,8 @@ PLIST
   local verified_app_path="$RELEASE_VERIFY_ROOT/Nightwing.app"
   local verified_ytdlp_path="$verified_app_path/Contents/Resources/yt-dlp"
   local verified_binary_path="$verified_app_path/Contents/MacOS/Nightwing macOS"
-  if [[ ! -d "$verified_app_path" || ! -f "$verified_ytdlp_path" ]]; then
-    echo "The final zip did not contain the expected Nightwing app and yt-dlp helper."
+  if [[ ! -d "$verified_app_path" || -e "$verified_ytdlp_path" ]]; then
+    echo "The final zip did not contain the expected optional-downloader app."
     return 1
   fi
 
@@ -231,13 +209,10 @@ PLIST
     return 1
   fi
 
-  codesign --verify --strict --verbose=2 "$verified_ytdlp_path"
-  local verified_ytdlp_version
-  verified_ytdlp_version="$("$verified_ytdlp_path" --version)"
-  if [[ "$verified_ytdlp_version" != "$signed_ytdlp_version" ]]; then
-    echo "The packaged yt-dlp helper failed its version smoke check."
-    return 1
-  fi
+  [[ "$(plutil -extract NightwingSourceCommit raw -o - "$verified_app_path/Contents/Info.plist")" == "$source_commit" ]]
+  for document in PRIVACY.md THIRD_PARTY_NOTICES.md LICENSE.txt INSTALL.md RELEASE_NOTES.md; do
+    cmp "$PROJECT_DIR/docs/Public/$document" "$verified_app_path/Contents/Resources/Public/$document"
+  done
   codesign --verify --deep --strict --verbose=2 "$verified_app_path"
   xcrun stapler validate "$verified_app_path"
   spctl --assess --type execute --verbose=4 "$verified_app_path"
@@ -247,6 +222,8 @@ PLIST
   checksum_output="$(shasum -a 256 "$FINAL_ZIP_PATH")"
   final_zip_sha256="${checksum_output%% *}"
   printf '%s  %s\n' "$final_zip_sha256" "${FINAL_ZIP_PATH:t}" > "$FINAL_ZIP_CHECKSUM_PATH"
+
+  printf '{"sourceCommit":"%s","version":"%s","build":"%s","zipSHA256":"%s","bundledDownloader":false,"architectures":["arm64","x86_64"],"signature":"verified","hardenedRuntime":true,"notarization":"Accepted","staple":"validated","gatekeeper":"accepted"}\n' "$source_commit" "$release_version" "$release_build" "$final_zip_sha256" > "$RELEASE_ROOT/RELEASE-VERIFICATION.json"
 
   echo
   echo "Release package is ready:"

@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct MacRootView: View {
     @EnvironmentObject private var appModel: NightwingAppModel
-    @AppStorage("nightwing.accentColor") private var accentColor = NightwingAccent.blue.rawValue
+    @AppStorage("nightwing.accentColor", store: NightwingEnvironment.defaults) private var accentColor = NightwingAccent.blue.rawValue
 
     @State private var selection: MacSidebarSelection = .home
     @State private var searchText = ""
@@ -380,7 +380,7 @@ private struct SpotifyTopBar: View {
 
     @Binding var searchText: String
     @Binding var showsImporter: Bool
-    @AppStorage("nightwing.recentSearches") private var recentSearchesData = ""
+    @AppStorage("nightwing.recentSearches", store: NightwingEnvironment.defaults) private var recentSearchesData = ""
     @State private var showsDownloads = false
     @FocusState private var isSearchFocused: Bool
 
@@ -550,7 +550,7 @@ private struct SpotifyHomeView: View {
     @Binding var selection: MacSidebarSelection
     @Binding var searchText: String
     @State private var showsAlbums = true
-    @AppStorage("nightwing.recentSearches") private var recentSearchesData = ""
+    @AppStorage("nightwing.recentSearches", store: NightwingEnvironment.defaults) private var recentSearchesData = ""
 
     private var albums: [LibraryAlbumGroup] {
         appModel.filteredAlbumGroups(matching: searchText)

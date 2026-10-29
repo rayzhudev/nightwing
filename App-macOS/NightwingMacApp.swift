@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 
 @main
@@ -6,14 +7,17 @@ struct NightwingMacApp: App {
     @StateObject private var appModel = NightwingAppModel()
 
     init() {
-        UserDefaults.standard.register(defaults: [
+        if ProcessInfo.processInfo.arguments.contains("--release-smoke-test"), NightwingEnvironment.isIsolated, !NightwingEnvironment.isTestHost {
+            Task { @MainActor in await NightwingReleaseSmoke.run() }
+        }
+        NightwingEnvironment.defaults.register(defaults: [
             "nightwing.restorePlaybackOnLaunch": true,
-            "nightwing.automaticallyLookupSyncedLyrics": true,
+            "nightwing.automaticallyLookupSyncedLyrics": false,
             "nightwing.defaultVolume": 0.85,
             "nightwing.accentColor": NightwingAccent.blue.rawValue
         ])
-        if UserDefaults.standard.string(forKey: "nightwing.accentColor") == "defaultAccent" {
-            UserDefaults.standard.set(NightwingAccent.blue.rawValue, forKey: "nightwing.accentColor")
+        if NightwingEnvironment.defaults.string(forKey: "nightwing.accentColor") == "defaultAccent" {
+            NightwingEnvironment.defaults.set(NightwingAccent.blue.rawValue, forKey: "nightwing.accentColor")
         }
     }
 
@@ -40,11 +44,11 @@ private struct NightwingSettingsView: View {
     @EnvironmentObject private var appModel: NightwingAppModel
     @EnvironmentObject private var player: PlayerEngine
 
-    @AppStorage("nightwing.restorePlaybackOnLaunch") private var restoresPlaybackOnLaunch = true
-    @AppStorage("nightwing.automaticallyLookupSyncedLyrics") private var automaticallyLookupSyncedLyrics = true
-    @AppStorage("nightwing.defaultVolume") private var defaultVolume = 0.85
-    @AppStorage("nightwing.recentSearches") private var recentSearchesData = ""
-    @AppStorage("nightwing.accentColor") private var accentColor = NightwingAccent.blue.rawValue
+    @AppStorage("nightwing.restorePlaybackOnLaunch", store: NightwingEnvironment.defaults) private var restoresPlaybackOnLaunch = true
+    @AppStorage("nightwing.automaticallyLookupSyncedLyrics", store: NightwingEnvironment.defaults) private var automaticallyLookupSyncedLyrics = false
+    @AppStorage("nightwing.defaultVolume", store: NightwingEnvironment.defaults) private var defaultVolume = 0.85
+    @AppStorage("nightwing.recentSearches", store: NightwingEnvironment.defaults) private var recentSearchesData = ""
+    @AppStorage("nightwing.accentColor", store: NightwingEnvironment.defaults) private var accentColor = NightwingAccent.blue.rawValue
 
     var body: some View {
         TabView {
@@ -155,7 +159,7 @@ private struct NightwingSettingsView: View {
             Form {
                 Section("Library") {
                     LabeledContent("Watched folders") {
-                        Text("Refresh automatically every 30 seconds")
+                        Text("Filesystem notifications; five-minute fallback")
                             .foregroundStyle(.secondary)
                     }
                     Text("Use the + button in the library to add a folder. Nightwing keeps that folder in sync without copying your original music files.")
@@ -182,6 +186,9 @@ private struct NightwingSettingsView: View {
             MusicServicesSettingsView(connections: appModel.musicServiceConnections)
                 .environmentObject(appModel)
                 .tabItem { Label("Connections", systemImage: "link") }
+
+            PublicBetaHelpView()
+                .tabItem { Label("Privacy & Help", systemImage: "hand.raised") }
         }
         .frame(width: 680, height: 520)
     }
@@ -238,8 +245,8 @@ private struct MusicServicesSettingsView: View {
     @EnvironmentObject private var appModel: NightwingAppModel
     @ObservedObject var connections: MusicServiceConnections
 
-    @AppStorage(MusicServiceConnections.youtubeClientIDDefaultsKey) private var youtubeClientID = ""
-    @AppStorage(MusicServiceConnections.spotifyClientIDDefaultsKey) private var spotifyClientID = ""
+    @AppStorage(MusicServiceConnections.youtubeClientIDDefaultsKey, store: NightwingEnvironment.defaults) private var youtubeClientID = ""
+    @AppStorage(MusicServiceConnections.spotifyClientIDDefaultsKey, store: NightwingEnvironment.defaults) private var spotifyClientID = ""
     @State private var youtubeClientSecret = MusicServiceConnections.savedClientSecret(for: .youtube)
     @State private var spotifyClientSecret = ""
 
@@ -475,4 +482,134 @@ private struct PlaybackCommands: Commands {
             .keyboardShortcut(.upArrow, modifiers: [.command])
         }
     }
+}
+
+
+private struct PublicBetaHelpView: View {
+    @State private var document = "PRIVACY.md"
+    private let documents = [("Privacy", "PRIVACY.md"), ("Components", "THIRD_PARTY_NOTICES.md"), ("Licence", "LICENSE.txt"), ("Install & recovery", "INSTALL.md"), ("Release notes", "RELEASE_NOTES.md")]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Document", selection: $document) {
+                ForEach(documents, id: \.1) { item in Text(item.0).tag(item.1) }
+            }
+            .pickerStyle(.menu)
+            ScrollView {
+                Text(contents)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+        }
+        .padding()
+    }
+    private var contents: String {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("Public/" + document),
+              let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return "The release documentation is missing. Please reinstall the complete Nightwing release."
+        }
+        return text
+    }
+}
+
+
+/// Opt-in acceptance check runs only with an explicitly isolated QA profile.
+@MainActor
+private enum NightwingReleaseSmoke {
+    static func run() async {
+        guard let root = NightwingEnvironment.profileDirectory else { return }
+        var checks: [String] = []
+        var report: [String: Any] = ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "", "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") ?? "", "sourceCommit": Bundle.main.object(forInfoDictionaryKey: "NightwingSourceCommit") ?? "development", "profile": root.path]
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            for name in ["PRIVACY.md", "THIRD_PARTY_NOTICES.md", "LICENSE.txt", "INSTALL.md", "RELEASE_NOTES.md"] {
+                let url = Bundle.main.resourceURL!.appendingPathComponent("Public/" + name)
+                guard !(try String(contentsOf: url, encoding: .utf8)).isEmpty else { throw failure("Missing documentation: " + name) }
+            }
+            guard Bundle.main.url(forResource: "yt-dlp", withExtension: nil) == nil else { throw failure("Unexpected bundled downloader") }
+            checks.append("bundled documentation and optional-downloader packaging")
+            let defaultStore = try JSONLocalLibraryStore.defaultStore()
+            guard await defaultStore.fileURL.path.hasPrefix(root.path), !NightwingEnvironment.defaults.bool(forKey: "nightwing.automaticallyLookupSyncedLyrics") else { throw failure("Profile or offline default is not isolated") }
+            let connections = MusicServiceConnections()
+            guard !connections.state(for: .youtube).isConnected, !connections.state(for: .spotify).isConnected else { throw failure("QA profile read a saved account") }
+            checks.append("fresh isolated library/preferences/accounts; online lyric lookup off")
+            let audioURL = root.appendingPathComponent("acceptance.wav")
+            let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 88200)!
+            buffer.frameLength = 88200
+            buffer.floatChannelData![0].initialize(repeating: 0, count: 88200)
+            do {
+                let output = try AVAudioFile(forWriting: audioURL, settings: format.settings)
+                try output.write(from: buffer)
+            }
+            let track = try await LibraryImportService().importFile(at: audioURL)
+            guard track.title == "acceptance", track.availability == .available, (track.duration ?? 0) > 1 else { throw failure("Audio import failed") }
+            let player = PlayerEngine()
+            player.setVolume(0)
+            try player.load(url: audioURL, autoplay: true)
+            try await Task.sleep(for: .milliseconds(650))
+            guard player.state.status == .playing, player.state.currentTime > 0 else { throw failure("Playback did not advance") }
+            player.pause()
+            try player.seek(to: 0.3, autoplay: false)
+            player.stop()
+            checks.append("WAV import, audio-engine playback, progress, pause, seek and stop")
+            let fixtures = root.appendingPathComponent("fixtures")
+            if FileManager.default.fileExists(atPath: fixtures.path) {
+                for fixture in try FileManager.default.contentsOfDirectory(at: fixtures, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path }) {
+                    let imported = try await LibraryImportService().importFile(at: fixture)
+                    guard imported.availability == .available, (imported.duration ?? 0) > 0 else { throw failure("Fixture import failed: " + fixture.lastPathComponent) }
+                    try player.load(url: fixture)
+                    checks.append(fixture.pathExtension.uppercased() + " fixture import and audio-engine decode")
+                }
+            }
+            let corruptURL = root.appendingPathComponent("corrupt.wav")
+            try Data("not audio".utf8).write(to: corruptURL)
+            for badURL in [corruptURL, root.appendingPathComponent("missing.wav")] {
+                var rejected = false
+                do { try player.load(url: badURL) } catch { rejected = true }
+                guard rejected else { throw failure("Unreadable audio was accepted") }
+            }
+            try player.load(url: audioURL)
+            checks.append("missing/corrupt audio errors and subsequent playable-file recovery")
+            let storeURL = root.appendingPathComponent("SmokeLibrary.json")
+            let store = JSONLocalLibraryStore(fileURL: storeURL)
+            var library = LocalLibrary.empty
+            library.upsertTracks([track])
+            try await store.save(library)
+            try Data("broken library".utf8).write(to: storeURL)
+            guard try await store.load().tracks.count == 1, await store.recoveryNotice != nil else { throw failure("Backup recovery failed") }
+            checks.append("library persistence and corrupt-library backup recovery")
+            if ProcessInfo.processInfo.arguments.contains("--provision-lyrics-runtime") {
+                let runtime = LyricsRuntimeService(directoryURL: root.appendingPathComponent("Nightwing/TranscriptionRuntime"))
+                let python = try await runtime.pythonPath()
+                report["runtimePython"] = python
+                checks.append("real transcription runtime provisioning and faster_whisper import")
+            }
+            if ProcessInfo.processInfo.arguments.contains("--download-lyrics-model") {
+                let service = try LyricsModelDownloadService.defaultService()
+                report["modelDirectory"] = try await service.ensureModelAvailable().path
+                checks.append("real pinned model download and per-file integrity verification")
+                let transcriber = LyricsTranscriptionService(modelDownloadService: service)
+                do {
+                    _ = try await transcriber.transcribe(track: track, sourceURL: audioURL, lookupOnline: false)
+                    checks.append("local model inference completed")
+                } catch LyricsTranscriptionService.TranscriptionError.emptyTranscript {
+                    checks.append("local model inference completed; synthetic silence correctly contains no lyrics")
+                }
+
+            }
+            report["status"] = "passed"
+        } catch {
+            report["status"] = "failed"
+            report["error"] = error.localizedDescription
+        }
+        report["checks"] = checks
+        do {
+            let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: root.appendingPathComponent("smoke-result.json"), options: .atomic)
+            print(String(decoding: data, as: UTF8.self))
+        } catch { print("Could not write smoke evidence: \(error)") }
+        NSApplication.shared.terminate(nil)
+    }
+    static func failure(_ message: String) -> NSError { NSError(domain: "NightwingReleaseSmoke", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
 }

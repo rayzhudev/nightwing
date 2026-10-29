@@ -35,7 +35,7 @@ public actor LyricsRuntimeService {
     }
 
     public static func defaultService(preferredPythonPath: String? = nil, fileManager: FileManager = .default) throws -> LyricsRuntimeService {
-        guard let supportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        guard let supportURL = NightwingEnvironment.applicationSupportDirectory else {
             throw RuntimeError.unavailable("Application Support is unavailable.")
         }
         return LyricsRuntimeService(
@@ -142,14 +142,10 @@ public actor LyricsRuntimeService {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
         let managedPython = directoryURL.appendingPathComponent("venv/bin/python").path
-        let candidates = [
-            preferredPythonPath,
-            managedPython,
-            NSHomeDirectory() + "/OpenClaw/venvs/video-editing/bin/python",
-            "/opt/homebrew/bin/python3",
-            "/usr/local/bin/python3",
-            "/usr/bin/python3"
-        ].compactMap { $0 }
+        var candidates = [preferredPythonPath, managedPython].compactMap { $0 }
+        if !NightwingEnvironment.isIsolated {
+            candidates += ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
+        }
 
         for candidate in candidates where fileManager.isExecutableFile(atPath: candidate) {
             try Task.checkCancellation()
@@ -246,12 +242,18 @@ public actor LyricsRuntimeService {
         ] {
             environment[key] = nil
         }
+        // Keep managed Python and uv caches with the app runtime, including QA profiles.
+        environment["UV_PYTHON_INSTALL_DIR"] = directoryURL.appendingPathComponent("managed-python").path
+        environment["UV_CACHE_DIR"] = directoryURL.appendingPathComponent("cache").path
+        environment["UV_PYTHON_BIN_DIR"] = directoryURL.appendingPathComponent("bin").path
         process.environment = environment
         let logURL = directoryURL.appendingPathComponent("runtime-install.log")
-        guard fileManager.createFile(atPath: logURL.path, contents: nil) else {
+        guard fileManager.fileExists(atPath: logURL.path) || fileManager.createFile(atPath: logURL.path, contents: nil) else {
             throw RuntimeError.unavailable("Could not create the runtime log.")
         }
         let log = try FileHandle(forWritingTo: logURL)
+        try log.seekToEnd()
+        try log.write(contentsOf: Data(("\n[" + URL(fileURLWithPath: executable).lastPathComponent + "] " + arguments.joined(separator: " ") + "\n").utf8))
         defer {
             try? log.close()
         }

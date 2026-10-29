@@ -81,6 +81,15 @@ struct LyricsFeatureTests {
         #expect(await service.availableModelURL() == modelURL)
     }
 
+    @Test func modelIntegrityRejectsCorruptionWithoutDownload() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = LyricsModelDownloadService(manifest: .init(name: "test", files: ["config.json"], sha256: ["config.json": "0000000000000000000000000000000000000000000000000000000000000000"]), directoryURL: root, huggingFaceCacheURL: root.appendingPathComponent("no-cache"))
+        try Data("corrupt".utf8).write(to: root.appendingPathComponent("config.json"))
+        #expect(await service.availableModelURL() == nil)
+    }
+
     @Test func runtimeProvisioningIsSingleFlightAndCancellationIsPerWaiter() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("NightwingRuntimeTests-\(UUID().uuidString)", isDirectory: true)
@@ -134,6 +143,75 @@ struct LyricsFeatureTests {
 
 @Suite(.serialized)
 struct ReliabilityTests {
+    @Test func testHostUsesSeparateLibraryPreferencesAndAccounts() async throws {
+        #expect(NightwingEnvironment.isIsolated)
+        #expect(NightwingEnvironment.isTestHost)
+        let store = try JSONLocalLibraryStore.defaultStore()
+        let fileURL = await store.fileURL
+        #expect(fileURL.path.hasPrefix(NightwingEnvironment.profileDirectory!.path))
+        #expect(!fileURL.path.hasPrefix(NSHomeDirectory() + "/Library/Application Support"))
+        #expect(NightwingEnvironment.defaults !== UserDefaults.standard)
+        let connections = await MusicServiceConnections()
+        #expect(await connections.state(for: .youtube) == .disconnected)
+        #expect(await connections.state(for: .spotify) == .disconnected)
+    }
+
+    @Test func lyricsOfflineRequestPropagatesAnErrorWithoutDataLoss() async throws {
+        TestMusicURLProtocol.mode = .failure
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TestMusicURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let service = CanonicalLyricsService(session: session)
+        let track = Track(fileURL: URL(fileURLWithPath: "/tmp/test.wav"), title: "Test", artist: "Test", album: "Test", duration: 2, fileType: .wav)
+        await #expect(throws: URLError.self) { try await service.lyrics(for: track) }
+    }
+
+    @Test @MainActor func oauthUserDenialDoesNotPersistToken() async throws {
+        var callbackTask: Task<Void, Never>?
+        let connections = MusicServiceConnections(openAuthorizationURL: { url in
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!
+            let redirect = query.first { $0.name == "redirect_uri" }!.value!
+            let state = query.first { $0.name == "state" }!.value!
+            var callback = URLComponents(string: redirect)!
+            callback.queryItems = [URLQueryItem(name: "state", value: state), URLQueryItem(name: "error", value: "access_denied")]
+            let callbackURL = callback.url!
+            callbackTask = Task { _ = try? await URLSession.shared.data(from: callbackURL) }
+            return true
+        }, loadToken: { _ in nil }, saveToken: { _, _ in Issue.record("Denied authorisation persisted a token") }, deleteToken: { _ in })
+        await connections.connect(.spotify, clientID: "test-client")
+        await callbackTask?.value
+        #expect(connections.state(for: .spotify) == .failed("Sign-in was cancelled."))
+    }
+
+    @Test @MainActor func cancellingOAuthTaskStopsCallbackWait() async throws {
+        var didOpen = false
+        let connections = MusicServiceConnections(openAuthorizationURL: { _ in didOpen = true; return true }, loadToken: { _ in nil }, saveToken: { _, _ in Issue.record("Cancelled OAuth saved a token") }, deleteToken: { _ in })
+        let task = Task { await connections.connect(.spotify, clientID: "test-client") }
+        for _ in 0..<200 where !didOpen { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(didOpen)
+        task.cancel()
+        await task.value
+        #expect(!connections.state(for: .spotify).isConnected)
+    }
+
+    @Test @MainActor func googleDisconnectAttemptsRemoteRevocationAndAlwaysDeletesLocalToken() async throws {
+        TestMusicURLProtocol.mode = .success
+        TestMusicURLProtocol.didRevoke = false
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TestMusicURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        var deleted = false
+        let connections = MusicServiceConnections(session: session, loadToken: { service in
+            service == .youtube ? OAuthToken(accessToken: "test", expiresAt: .distantFuture) : nil
+        }, saveToken: { _, _ in }, deleteToken: { service in deleted = service == .youtube })
+        await connections.disconnect(.youtube)
+        #expect(deleted)
+        #expect(TestMusicURLProtocol.didRevoke)
+        #expect(connections.state(for: .youtube) == .disconnected)
+    }
+
     @Test func libraryRecoveryPreservesOriginalAndRestoresBackup() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -276,6 +354,11 @@ struct ReliabilityTests {
 private final class TestMusicURLProtocol: URLProtocol, @unchecked Sendable {
     enum Mode { case delayed, failure, success }
     private static let lock = NSLock()
+    private static var storedRevoke = false
+    static var didRevoke: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return storedRevoke }
+        set { lock.lock(); defer { lock.unlock() }; storedRevoke = newValue }
+    }
     private static var storedMode = Mode.success
     static var mode: Mode {
         get { lock.lock(); defer { lock.unlock() }; return storedMode }
@@ -284,6 +367,7 @@ private final class TestMusicURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        if request.url?.path == "/revoke" { Self.didRevoke = true }
         switch Self.mode {
         case .delayed: break // The session must cancel this outstanding request on disconnect.
         case .failure: client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))

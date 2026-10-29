@@ -1,5 +1,32 @@
 import Foundation
 
+/// Test hosts and explicit QA profiles never open the normal library, defaults or Keychain.
+enum NightwingEnvironment {
+    static let isTestHost = ProcessInfo.processInfo.environment["NIGHTWING_TEST_MODE"] == "1"
+        || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
+        || NSClassFromString("XCTestCase") != nil
+        || NSClassFromString("XCTest.XCTestCase") != nil
+    static let profileDirectory: URL? = {
+        if let path = ProcessInfo.processInfo.environment["NIGHTWING_PROFILE_DIRECTORY"], path.hasPrefix("/") {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        if isTestHost {
+            return FileManager.default.temporaryDirectory.appendingPathComponent("NightwingTests-\(UUID().uuidString)", isDirectory: true)
+        }
+        return nil
+    }()
+    static var isIsolated: Bool { profileDirectory != nil }
+    static var applicationSupportDirectory: URL? {
+        profileDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    }
+    static let defaults: UserDefaults = {
+        guard let profileDirectory else { return .standard }
+        // A fresh, process-local suite: do not inherit saved accounts, queue or search history.
+        return UserDefaults(suiteName: "com.rayzhu.nightwing.qa.\(profileDirectory.lastPathComponent).\(UUID().uuidString)")!
+    }()
+}
+
 public actor JSONLocalLibraryStore {
     public enum StoreError: Error, LocalizedError, Sendable {
         case unableToCreateApplicationSupportDirectory
@@ -40,7 +67,7 @@ public actor JSONLocalLibraryStore {
         applicationName: String = "Nightwing",
         fileManager: FileManager = .default
     ) throws -> JSONLocalLibraryStore {
-        guard let applicationSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        guard let applicationSupportURL = NightwingEnvironment.applicationSupportDirectory else {
             throw StoreError.unableToCreateApplicationSupportDirectory
         }
 

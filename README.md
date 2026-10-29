@@ -24,7 +24,7 @@ Open `Nightwing.xcodeproj` in Xcode and run either the `Nightwing macOS` or `Nig
 
 For the normal macOS development loop, double-click `Rebuild Nightwing.command`. It builds a fresh Debug app, replaces the repository-local `Nightwing.app`, and launches it.
 
-YouTube downloads use the bundled yt-dlp helper (2026.08.19). Nightwing automatically enables an installed Deno or Node runtime, including standard Homebrew paths when launched from Finder. Use a runtime supported by [yt-dlp's JavaScript setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS); audio extraction also requires ffmpeg. The prepared helper in Application Support is refreshed when the bundled binary changes.
+Public beta 0.3.0 does not bundle yt-dlp. Online downloads/playback require a separately installed yt-dlp, ffmpeg/ffprobe and supported JavaScript runtime (for example `brew install yt-dlp ffmpeg deno` with an existing Homebrew installation). Nightwing automatically enables an installed Deno or Node runtime, including standard Homebrew paths when launched from Finder. Use a runtime supported by [yt-dlp's JavaScript setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS); audio extraction also requires ffmpeg. Old prepared helpers are not used by this beta.
 
 ## Playlist service setup
 
@@ -39,7 +39,7 @@ OAuth access and refresh tokens are stored in the macOS Keychain as device-only 
 
 ## Distribution
 
-`./Rebuild Nightwing.command --release` creates a Developer ID signed and notarized macOS build, validates the bundled downloader helper, and writes the distributable archive to `dist/Nightwing-macOS.zip`.
+`./Rebuild Nightwing.command --release` creates a Developer ID signed and notarized macOS build, validates bundled documentation and rejects a stale bundled downloader, and writes the distributable archive to `dist/Nightwing-macOS.zip`.
 
 The release path requires the configured Developer ID certificate and the `nightwing-notary` keychain profile. Generated apps, Derived Data, and `dist/` are intentionally ignored by Git.
 
@@ -52,3 +52,22 @@ See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the original 
 - When online lyric lookup is enabled, existing synced lyrics or instrumental metadata are used before downloading or running the transcription model. Plain lyrics are reused for alignment. Disabling the setting also disables lookup during local generation.
 - macOS watched folders use recursive filesystem notifications with debouncing. A five-minute reconciliation scan remains as a fallback; iPhone uses the periodic fallback.
 - Account disconnect invalidates pending requests. Playlist refresh errors keep the account connected and expose a retry action.
+
+## Public beta documentation
+
+- [Release notes](docs/Public/RELEASE_NOTES.md)
+- [Privacy, network access and retention](docs/Public/PRIVACY.md)
+- [Components, provenance and attribution](docs/Public/THIRD_PARTY_NOTICES.md)
+- [Licence positioning](docs/Public/LICENSE.txt)
+- [Install, prerequisites, backup, recovery and uninstall](docs/Public/INSTALL.md)
+- [Release-readiness checklist](docs/RELEASE_READINESS.md)
+
+All public documents ship inside the app and are readable in Settings > Privacy & Help, without a network connection. Online lyric lookup defaults off for new profiles. The direct ZIP is a universal macOS 26+ beta. No public service OAuth client or automatic updater is provided.
+
+### Isolated verification
+
+`xcodebuild -project Nightwing.xcodeproj -scheme "Nightwing macOS" -destination 'platform=macOS,arch=arm64' -parallel-testing-enabled NO test`
+
+The shared test scheme sets NIGHTWING_TEST_MODE=1 before the app host starts. Each test host uses a new temporary support directory, a separate preferences suite and no real Keychain credentials. Test network responses use URLProtocol fixtures (OAuth denial uses a local loopback callback).
+
+For the exact packaged app, set `NIGHTWING_PROFILE_DIRECTORY` to a fresh absolute temporary directory and run its Contents/MacOS/Nightwing macOS executable with `--release-smoke-test`. The app checks real imports/playback/recovery and bundled documentation, writes smoke-result.json there and exits. Optional flags `--provision-lyrics-runtime --download-lyrics-model` also exercise real upstream provisioning into the isolated profile. This is a clean-profile acceptance check, not a claim that a separate macOS user or Intel hardware was tested.

@@ -36,7 +36,7 @@ public actor LyricsSidecarStore {
         applicationName: String = "Nightwing",
         fileManager: FileManager = .default
     ) throws -> LyricsSidecarStore {
-        guard let applicationSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        guard let applicationSupportURL = NightwingEnvironment.applicationSupportDirectory else {
             throw StoreError.unableToCreateApplicationSupportDirectory
         }
 

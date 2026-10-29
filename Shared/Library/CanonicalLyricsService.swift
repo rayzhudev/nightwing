@@ -1,7 +1,8 @@
 import Foundation
 
 public actor CanonicalLyricsService {
-    public init() {}
+    private let session: URLSession
+    public init(session: URLSession = .shared) { self.session = session }
 
     private struct Record: Decodable {
         let instrumental: Bool
@@ -36,8 +37,8 @@ public actor CanonicalLyricsService {
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
-        request.setValue("Nightwing/1.0 (local music player)", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        request.setValue("Nightwing/0.3 (local music player)", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { return nil }
         if httpResponse.statusCode == 404 { return nil }
         guard (200...299).contains(httpResponse.statusCode) else { return nil }

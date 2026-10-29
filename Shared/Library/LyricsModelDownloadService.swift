@@ -84,10 +84,10 @@ public actor LyricsModelDownloadService {
     ) {
         self.manifest = manifest
         self.directoryURL = directoryURL
-        self.huggingFaceCacheURL = huggingFaceCacheURL ?? Self.defaultHuggingFaceCacheURL(
+        self.huggingFaceCacheURL = huggingFaceCacheURL ?? (NightwingEnvironment.profileDirectory?.appendingPathComponent("huggingface-cache") ?? Self.defaultHuggingFaceCacheURL(
             for: manifest,
             fileManager: fileManager
-        )
+        ))
         self.fileManager = fileManager
     }
 
@@ -95,7 +95,7 @@ public actor LyricsModelDownloadService {
         applicationName: String = "Nightwing",
         fileManager: FileManager = .default
     ) throws -> LyricsModelDownloadService {
-        guard let applicationSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        guard let applicationSupportURL = NightwingEnvironment.applicationSupportDirectory else {
             throw DownloadError.unableToCreateApplicationSupportDirectory
         }
 

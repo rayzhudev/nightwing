@@ -394,18 +394,6 @@ actor YtDlpDownloadService {
         var candidates: [String] = []
         var seen = Set<String>()
 
-        if let bundleURL = bundledYtDlpURL() {
-            if let preparedURL = prepareBundledYtDlp(from: bundleURL) {
-                appendExecutableCandidate(preparedURL.path, to: &candidates, seen: &seen)
-            }
-            if candidates.isEmpty {
-                appendExecutableCandidate(bundleURL.path, to: &candidates, seen: &seen)
-            }
-            // The bundled helper and its prepared copy are the same version.
-            // Retrying both (then an older system install) only repeats failures.
-            if !candidates.isEmpty { return candidates }
-        }
-
         if let path = ProcessInfo.processInfo.environment["PATH"] {
             for dir in path.components(separatedBy: ":") {
                 let candidate = (dir as NSString).appendingPathComponent("yt-dlp")
@@ -420,59 +408,6 @@ actor YtDlpDownloadService {
         return candidates
     }
 
-    private static func bundledYtDlpURL() -> URL? {
-        if let bundleURL = Bundle.main.url(forResource: "yt-dlp", withExtension: nil),
-           FileManager.default.fileExists(atPath: bundleURL.path) {
-            return bundleURL
-        }
-
-        if let bundleURL = Bundle.main.resourceURL?.appendingPathComponent("yt-dlp"),
-           FileManager.default.fileExists(atPath: bundleURL.path) {
-            return bundleURL
-        }
-
-        return nil
-    }
-
-    private static func prepareBundledYtDlp(from bundleURL: URL) -> URL? {
-        guard let destinationURL = helperDestinationURL() else { return nil }
-        let fileManager = FileManager.default
-
-        do {
-            try fileManager.createDirectory(
-                at: destinationURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-
-            let shouldCopy = !fileManager.contentsEqual(atPath: destinationURL.path, andPath: bundleURL.path)
-
-            if shouldCopy {
-                if fileManager.fileExists(atPath: destinationURL.path) {
-                    try fileManager.removeItem(at: destinationURL)
-                }
-                try fileManager.copyItem(at: bundleURL, to: destinationURL)
-            }
-
-            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destinationURL.path)
-            removeLaunchBlockingExtendedAttributes(from: destinationURL)
-
-            guard fileManager.isExecutableFile(atPath: destinationURL.path) else { return nil }
-            return destinationURL
-        } catch {
-            #if canImport(os)
-            Logger(subsystem: "com.nightwing", category: "YtDlp").error("Could not prepare yt-dlp helper: \(error.localizedDescription, privacy: .public)")
-            #endif
-            return nil
-        }
-    }
-
-    private static func helperDestinationURL() -> URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("Nightwing")
-            .appendingPathComponent("Helpers")
-            .appendingPathComponent("yt-dlp")
-    }
-
     private static func appendExecutableCandidate(_ path: String, to candidates: inout [String], seen: inout Set<String>) {
         let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
         guard !seen.contains(standardizedPath),
@@ -484,24 +419,12 @@ actor YtDlpDownloadService {
         candidates.append(standardizedPath)
     }
 
-    private static func removeLaunchBlockingExtendedAttributes(from url: URL) {
-        #if os(macOS)
-        for attribute in ["com.apple.quarantine", "com.apple.provenance"] {
-            url.path.withCString { pathPointer in
-                attribute.withCString { attributePointer in
-                    _ = removexattr(pathPointer, attributePointer, 0)
-                }
-            }
-        }
-        #endif
-    }
-
     static func downloadsBaseURL() -> URL {
         onlineDownloadsBaseURL()
     }
 
     static func onlineDownloadsBaseURL() -> URL {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let directory = NightwingEnvironment.applicationSupportDirectory!
         return directory.appendingPathComponent("Nightwing").appendingPathComponent("Online Downloads")
     }
 
@@ -2077,7 +2000,7 @@ enum YtDlpError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notFound:
-            return "Nightwing could not find its download helper."
+            return "Online downloads require yt-dlp installed by you. Install yt-dlp, ffmpeg and a supported JavaScript runtime; see Settings > Privacy & Help > Install & recovery."
         case let .downloadFailed(message):
             return "Download failed: \(message)"
         case let .commandFailed(command):

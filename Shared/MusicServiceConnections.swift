@@ -212,6 +212,7 @@ final class MusicServiceConnections: ObservableObject {
     private var tokenRefreshes: [MusicPlaylistService: Task<OAuthToken, Error>] = [:]
     private var receivers: [MusicPlaylistService: LoopbackOAuthReceiver] = [:]
     private let session: URLSession
+    private let openAuthorizationURL: (URL) -> Bool
     private let saveToken: (OAuthToken, MusicPlaylistService) throws -> Void
     private let deleteToken: (MusicPlaylistService) -> Void
 
@@ -259,7 +260,7 @@ final class MusicServiceConnections: ObservableObject {
 
     static func isConfigured(for service: MusicPlaylistService) -> Bool {
         let defaultsKey = service == .youtube ? youtubeClientIDDefaultsKey : spotifyClientIDDefaultsKey
-        guard let clientID = UserDefaults.standard.string(forKey: defaultsKey),
+        guard let clientID = NightwingEnvironment.defaults.string(forKey: defaultsKey),
               !clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }
@@ -268,11 +269,13 @@ final class MusicServiceConnections: ObservableObject {
 
     init(
         session: URLSession = .shared,
+        openAuthorizationURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
         loadToken: (MusicPlaylistService) -> OAuthToken? = { OAuthTokenStore.load(for: $0) },
         saveToken: @escaping (OAuthToken, MusicPlaylistService) throws -> Void = { try OAuthTokenStore.save($0, for: $1) },
         deleteToken: @escaping (MusicPlaylistService) -> Void = { OAuthTokenStore.delete(for: $0) }
     ) {
         self.session = session
+        self.openAuthorizationURL = openAuthorizationURL
         self.saveToken = saveToken
         self.deleteToken = deleteToken
         for service in MusicPlaylistService.allCases {
@@ -325,7 +328,7 @@ final class MusicServiceConnections: ObservableObject {
                 state: state
             )
 
-            guard NSWorkspace.shared.open(authorizationURL) else {
+            guard openAuthorizationURL(authorizationURL) else {
                 throw MusicServiceConnectionError.unableToOpenBrowser
             }
 
@@ -366,7 +369,7 @@ final class MusicServiceConnections: ObservableObject {
 
     func connectUsingSavedCredentials(_ service: MusicPlaylistService) async {
         let defaultsKey = service == .youtube ? Self.youtubeClientIDDefaultsKey : Self.spotifyClientIDDefaultsKey
-        let clientID = UserDefaults.standard.string(forKey: defaultsKey) ?? ""
+        let clientID = NightwingEnvironment.defaults.string(forKey: defaultsKey) ?? ""
         await connect(service, clientID: clientID, clientSecret: Self.savedClientSecret(for: service))
     }
 
@@ -485,7 +488,7 @@ final class MusicServiceConnections: ObservableObject {
             throw MusicServiceConnectionError.missingRefreshToken
         }
         let defaultsKey = service == .youtube ? Self.youtubeClientIDDefaultsKey : Self.spotifyClientIDDefaultsKey
-        guard let clientID = UserDefaults.standard.string(forKey: defaultsKey), !clientID.isEmpty else {
+        guard let clientID = NightwingEnvironment.defaults.string(forKey: defaultsKey), !clientID.isEmpty else {
             throw MusicServiceConnectionError.missingClientID(service)
         }
         let endpoint = service == .youtube
@@ -800,6 +803,7 @@ private enum OAuthClientSecretStore {
     private static let keychainService = "com.rayzhu.nightwing.oauth-client-secrets"
 
     static func load(for service: MusicPlaylistService) -> String? {
+        guard !NightwingEnvironment.isIsolated else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -815,6 +819,7 @@ private enum OAuthClientSecretStore {
     }
 
     static func save(_ secret: String, for service: MusicPlaylistService) throws {
+        guard !NightwingEnvironment.isIsolated else { return }
         let data = Data(secret.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -845,6 +850,7 @@ private enum OAuthTokenStore {
     private static let keychainService = "com.rayzhu.nightwing.music-services"
 
     static func load(for service: MusicPlaylistService) -> OAuthToken? {
+        guard !NightwingEnvironment.isIsolated else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -860,6 +866,7 @@ private enum OAuthTokenStore {
     }
 
     static func save(_ token: OAuthToken, for service: MusicPlaylistService) throws {
+        guard !NightwingEnvironment.isIsolated else { return }
         let data = try JSONEncoder().encode(token)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -886,6 +893,7 @@ private enum OAuthTokenStore {
     }
 
     static func delete(for service: MusicPlaylistService) {
+        guard !NightwingEnvironment.isIsolated else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -954,16 +962,18 @@ private final class LoopbackOAuthReceiver: @unchecked Sendable {
     }
 
     func waitForCallback() async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                if let result = self.bufferedCallback {
-                    self.bufferedCallback = nil
-                    continuation.resume(with: result)
-                } else {
-                    self.callbackContinuation = continuation
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    if let result = self.bufferedCallback {
+                        self.bufferedCallback = nil
+                        continuation.resume(with: result)
+                    } else {
+                        self.callbackContinuation = continuation
+                    }
                 }
             }
-        }
+        } onCancel: { self.cancel() }
     }
 
     private func handle(_ connection: NWConnection) {

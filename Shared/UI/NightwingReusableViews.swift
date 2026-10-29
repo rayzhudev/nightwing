@@ -88,7 +88,7 @@ enum NightwingAccent: String, CaseIterable, Identifiable {
 
     private static var systemAccentColor: Color {
         #if os(macOS)
-        let accentNumber = (UserDefaults.standard.object(forKey: "AppleAccentColor") as? NSNumber)?.intValue
+        let accentNumber = (NightwingEnvironment.defaults.object(forKey: "AppleAccentColor") as? NSNumber)?.intValue
         switch accentNumber {
         case -1: return NightwingAccent.graphite.color
         case 0: return NightwingAccent.red.color
@@ -111,7 +111,7 @@ enum NightwingTheme {
     static let panel = Color(red: 24 / 255, green: 24 / 255, blue: 24 / 255)
     static let panelElevated = Color(red: 40 / 255, green: 40 / 255, blue: 40 / 255)
     static var action: Color {
-        let storedValue = UserDefaults.standard.string(forKey: "nightwing.accentColor")
+        let storedValue = NightwingEnvironment.defaults.string(forKey: "nightwing.accentColor")
         return (storedValue.flatMap(NightwingAccent.init(rawValue:)) ?? .blue).color
     }
     static let rowHover = Color.white.opacity(0.10)

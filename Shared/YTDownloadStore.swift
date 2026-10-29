@@ -8,13 +8,13 @@ import Foundation
 final class OnlineTrackStore: Sendable {
     /// Returns the URL where the store's JSON file lives in Application Support.
     static func storeURL() -> URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = NightwingEnvironment.applicationSupportDirectory!
         return dir.appendingPathComponent("Nightwing").appendingPathComponent("OnlineTrackStore.json")
     }
     
     /// Returns the base directory where downloaded audio files are stored.
     static func downloadsBaseURL() -> URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = NightwingEnvironment.applicationSupportDirectory!
         return dir.appendingPathComponent("Nightwing").appendingPathComponent("Downloads")
     }
     

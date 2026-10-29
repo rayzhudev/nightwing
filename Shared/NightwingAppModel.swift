@@ -175,7 +175,7 @@ final class NightwingAppModel: ObservableObject {
         lyricsTranscriptionService = LyricsTranscriptionService(
             modelDownloadService: lyricsModelDownloadService
         )
-        let savedVolume = UserDefaults.standard.double(forKey: "nightwing.defaultVolume")
+        let savedVolume = NightwingEnvironment.defaults.double(forKey: "nightwing.defaultVolume")
         player.setVolume(savedVolume > 0 ? savedVolume : 0.85)
         lyricsQueue.stateChanged = { [weak self] in
             guard let self else { return }
@@ -1550,7 +1550,7 @@ final class NightwingAppModel: ObservableObject {
                     }
                 }
                 lyricsModelState = .ready
-                UserDefaults.standard.set(true, forKey: Self.pendingLibraryLyricsGenerationKey)
+                NightwingEnvironment.defaults.set(true, forKey: Self.pendingLibraryLyricsGenerationKey)
                 statusMessage = "The lyrics model is ready. Preparing your library..."
                 startPendingLibraryLyricsGenerationIfNeeded()
             } catch is CancellationError {
@@ -1568,18 +1568,18 @@ final class NightwingAppModel: ObservableObject {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
               didLoadLibrary,
               lyricsModelState == .ready,
-              (UserDefaults.standard.bool(forKey: Self.pendingLibraryLyricsGenerationKey) ||
-                UserDefaults.standard.integer(forKey: Self.libraryLyricsBackfillVersionKey) < Self.currentLibraryLyricsBackfillVersion),
+              (NightwingEnvironment.defaults.bool(forKey: Self.pendingLibraryLyricsGenerationKey) ||
+                NightwingEnvironment.defaults.integer(forKey: Self.libraryLyricsBackfillVersionKey) < Self.currentLibraryLyricsBackfillVersion),
               libraryLyricsGenerationTask == nil else { return }
 
-        UserDefaults.standard.set(true, forKey: Self.pendingLibraryLyricsGenerationKey)
+        NightwingEnvironment.defaults.set(true, forKey: Self.pendingLibraryLyricsGenerationKey)
 
         let tracks = library.tracks.filter { track in
             track.availability == .available && track.lyricsMetadata?.status != .ready
         }
         guard !tracks.isEmpty else {
-            UserDefaults.standard.set(false, forKey: Self.pendingLibraryLyricsGenerationKey)
-            UserDefaults.standard.set(Self.currentLibraryLyricsBackfillVersion, forKey: Self.libraryLyricsBackfillVersionKey)
+            NightwingEnvironment.defaults.set(false, forKey: Self.pendingLibraryLyricsGenerationKey)
+            NightwingEnvironment.defaults.set(Self.currentLibraryLyricsBackfillVersion, forKey: Self.libraryLyricsBackfillVersionKey)
             statusMessage = "Your library already has lyrics."
             return
         }
@@ -1616,8 +1616,8 @@ final class NightwingAppModel: ObservableObject {
             let failedCount = tracks.count - generatedCount
             self.lyricsLibraryGenerationProgress = nil
             self.libraryLyricsGenerationTask = nil
-            UserDefaults.standard.set(false, forKey: Self.pendingLibraryLyricsGenerationKey)
-            UserDefaults.standard.set(Self.currentLibraryLyricsBackfillVersion, forKey: Self.libraryLyricsBackfillVersionKey)
+            NightwingEnvironment.defaults.set(false, forKey: Self.pendingLibraryLyricsGenerationKey)
+            NightwingEnvironment.defaults.set(Self.currentLibraryLyricsBackfillVersion, forKey: Self.libraryLyricsBackfillVersionKey)
             self.statusMessage = failedCount == 0
                 ? "Generated lyrics for \(generatedCount) songs in your library."
                 : "Generated lyrics for \(generatedCount) songs. \(failedCount) could not be completed."
@@ -1659,7 +1659,7 @@ final class NightwingAppModel: ObservableObject {
                 }
 
                 #if os(iOS)
-                guard UserDefaults.standard.bool(forKey: "nightwing.automaticallyLookupSyncedLyrics"),
+                guard NightwingEnvironment.defaults.bool(forKey: "nightwing.automaticallyLookupSyncedLyrics"),
                       let canonical = try await self?.canonicalLyricsService.lyrics(for: track),
                       case .synced(let lines) = canonical,
                       !lines.isEmpty else { return }
@@ -1736,7 +1736,7 @@ final class NightwingAppModel: ObservableObject {
                 let document = try await self.lyricsTranscriptionService.transcribe(
                     track: track,
                     sourceURL: sourceURL,
-                    lookupOnline: UserDefaults.standard.bool(forKey: "nightwing.automaticallyLookupSyncedLyrics"),
+                    lookupOnline: NightwingEnvironment.defaults.bool(forKey: "nightwing.automaticallyLookupSyncedLyrics"),
                     onModelDownloadProgress: { progress in
                         Task { @MainActor [weak self] in
                             guard self?.activeLyricsTrackID == track.id else { return }
@@ -2265,7 +2265,7 @@ final class NightwingAppModel: ObservableObject {
     }
 
     private func restorePlaybackIfNeeded(from loadedLibrary: LocalLibrary) {
-        guard UserDefaults.standard.bool(forKey: "nightwing.restorePlaybackOnLaunch"),
+        guard NightwingEnvironment.defaults.bool(forKey: "nightwing.restorePlaybackOnLaunch"),
               let resumeState = loadedLibrary.playbackResumeState,
               !loadedLibrary.queue.isEmpty,
               loadedLibrary.queue.currentItem != nil else { return }
