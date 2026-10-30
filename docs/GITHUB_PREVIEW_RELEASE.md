@@ -1,4 +1,6 @@
-## Nightwing 0.3.0 (3) — Developer Preview
+**UNPUBLISHED LOCAL CANDIDATE TEMPLATE. Publication/replacement of assets requires separate explicit approval.**
+
+## Nightwing 0.3.1 (4) — Developer Preview
 
 Local-first music playback with Nightcore controls, local libraries, playlists, queues, watched folders and optional lyrics and YouTube/Spotify playlist connections.
 
@@ -8,15 +10,15 @@ Local-first music playback with Nightcore controls, local libraries, playlists, 
 
 Download these two assets from this prerelease:
 
-- `Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip`
-- `Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256`
+- `Nightwing-0.3.1-b4-DEVELOPER-PREVIEW-UNNOTARIZED.zip`
+- `Nightwing-0.3.1-b4-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256`
 <!-- GENERATED_IDENTITY -->
-- App: **0.3.0 (3)**. The generated release body and package identity/checksum record the exact source and SHA-256.
+- App: **0.3.1 (4)**. The generated release body and package identity/checksum record the exact source and SHA-256.
 
 Verify in the download directory:
 
 ```sh
-shasum -a 256 -c Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256
+shasum -a 256 -c Nightwing-0.3.1-b4-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256
 ```
 
 Check for `OK`, unzip and drag **Nightwing.app** to **Applications**, then complete the [first-launch steps](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/INSTALL.md#install). Back up existing Nightwing data and original music before replacing an older app.
@@ -25,7 +27,7 @@ Check for `OK`, unzip and drag **Nightwing.app** to **Applications**, then compl
 
 Use **Add Files** or **Add Folder**, select a song and try **Nightcore**. Local import/playback works offline without an account or extra tools.
 
-Online downloads/playback require separately installed yt-dlp, ffmpeg/ffprobe and a supported JavaScript runtime (Deno recommended). With Homebrew already installed: `brew install yt-dlp ffmpeg deno`. Optional local transcription downloads its runtime/model; it does not upload your audio. Online lyrics lookup starts off for new profiles. [Playlist connections](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/CONNECTIONS.md) require your own provider developer clients and import metadata/local matches, not service audio. Only download content you are entitled to use and follow provider terms.
+Online media tools are bundled: yt-dlp, CPython, FFmpeg/ffprobe and Node/EJS. No Homebrew setup is required. Exact notices, inventory and required source accompany the app. Optional local transcription downloads its runtime/model; it does not upload your audio. Online lyrics lookup starts off for new profiles. [Playlist connections](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/CONNECTIONS.md) require your own provider developer clients and import metadata/local matches, not service audio. Only download content you are entitled to use and follow provider terms.
 
 ### Details and support
 

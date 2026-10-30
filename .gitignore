@@ -13,3 +13,7 @@ dist/
 # Swift Package Manager
 .build/
 .swiftpm/
+
+# Python build tooling
+__pycache__/
+*.pyc

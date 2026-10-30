@@ -490,6 +490,10 @@ private struct PublicBetaHelpView: View {
     private let documents = [("Privacy", "PRIVACY.md"), ("Components", "THIRD_PARTY_NOTICES.md"), ("Licence", "LICENSE.txt"), ("Install & recovery", "INSTALL.md"), ("Release notes", "RELEASE_NOTES.md")]
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Text(YtDlpDownloadService.bundledMediaToolsSummary)
+                .font(.caption).textSelection(.enabled)
+            Text("Tools update only when you replace Nightwing. No self-updating helpers.")
+                .font(.caption).foregroundStyle(.secondary)
             Picker("Document", selection: $document) {
                 ForEach(documents, id: \.1) { item in Text(item.0).tag(item.1) }
             }
@@ -526,8 +530,11 @@ private enum NightwingReleaseSmoke {
                 let url = Bundle.main.resourceURL!.appendingPathComponent("Public/" + name)
                 guard !(try String(contentsOf: url, encoding: .utf8)).isEmpty else { throw failure("Missing documentation: " + name) }
             }
-            guard Bundle.main.url(forResource: "yt-dlp", withExtension: nil) == nil else { throw failure("Unexpected bundled downloader") }
-            checks.append("bundled documentation and optional-downloader packaging")
+            let downloaderVersion = try await YtDlpDownloadService.verifyBundledDownloader()
+            guard downloaderVersion == "2026.10.26" else { throw failure("Unexpected bundled downloader version: " + downloaderVersion) }
+            report["mediaTools"] = YtDlpDownloadService.bundledMediaToolsSummary
+            report["downloader"] = YtDlpDownloadService.locateYtDlp()
+            checks.append("sealed bundled media-tool discovery and actual downloader version execution")
             let defaultStore = try JSONLocalLibraryStore.defaultStore()
             guard await defaultStore.fileURL.path.hasPrefix(root.path), !NightwingEnvironment.defaults.bool(forKey: "nightwing.automaticallyLookupSyncedLyrics") else { throw failure("Profile or offline default is not isolated") }
             let connections = MusicServiceConnections()
@@ -553,6 +560,21 @@ private enum NightwingReleaseSmoke {
             try player.seek(to: 0.3, autoplay: false)
             player.stop()
             checks.append("WAV import, audio-engine playback, progress, pause, seek and stop")
+            if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--media-smoke-url"),
+               ProcessInfo.processInfo.arguments.indices.contains(index + 1),
+               let source = URL(string: ProcessInfo.processInfo.arguments[index + 1]) {
+                let downloaded = try await YtDlpDownloadService().download(OnlineSearchResult(
+                    id: "isolated-media-fixture", title: "Isolated Media Fixture", sourceURL: source))
+                guard downloaded.path.hasPrefix(root.path) else { throw failure("Media download escaped QA profile") }
+                try player.load(url: downloaded)
+                try player.play()
+                try await Task.sleep(for: .milliseconds(650))
+                guard player.state.status == .playing, player.state.currentTime > 0 else { throw failure("Downloaded media playback did not advance") }
+                player.stop()
+                report["downloadedFixture"] = downloaded.path
+                checks.append("isolated URL download, bundled FFmpeg extraction, cache import and real audio-engine playback")
+            }
+
             let fixtures = root.appendingPathComponent("fixtures")
             if FileManager.default.fileExists(atPath: fixtures.path) {
                 for fixture in try FileManager.default.contentsOfDirectory(at: fixtures, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path }) {

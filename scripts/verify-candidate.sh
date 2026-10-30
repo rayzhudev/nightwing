@@ -33,7 +33,7 @@ otool -L "$binary" > "$evidence_dir/linked-libraries.txt"
 for name in PRIVACY.md THIRD_PARTY_NOTICES.md LICENSE.txt INSTALL.md RELEASE_NOTES.md; do
   cmp "$project_dir/docs/Public/$name" "$app/Contents/Resources/Public/$name"
 done
-[[ ! -e "$app/Contents/Resources/yt-dlp" ]]
+python3 "$project_dir/scripts/build-media-tools.py" --verify "$app"
 python3 - "$qa_root" <<'PYTHON'
 import sys,wave
 from pathlib import Path

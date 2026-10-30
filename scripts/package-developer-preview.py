@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / 'dist'
 SOURCE_COMMIT = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-NAME = 'Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip'
+NAME = 'Nightwing-0.3.1-b4-DEVELOPER-PREVIEW-UNNOTARIZED.zip'
 
 def run(*args, check=True):
     result = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -52,18 +52,20 @@ with tempfile.TemporaryDirectory(prefix='nightwing-preview-', dir='/private/tmp'
     run('ditto', str(archive / 'Products/Applications/Nightwing macOS.app'), str(app))
     run('/usr/libexec/PlistBuddy', '-c', f'Add :NightwingSourceCommit string {SOURCE_COMMIT}',
         str(app / 'Contents/Info.plist'))
+    run('python3', str(ROOT / 'scripts/build-media-tools.py'), '--stage', str(app))
     run('codesign', '--force', '--options', 'runtime', '--timestamp', '--sign',
         'Developer ID Application: Ray Zhu (6G8K3FNTVJ)', str(app))
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     require((info['CFBundleShortVersionString'], info['CFBundleVersion'], info['NightwingSourceCommit'],
-             info['LSMinimumSystemVersion']) == ('0.3.0', '3', SOURCE_COMMIT, '26.0'), 'Unexpected app identity')
+             info['LSMinimumSystemVersion']) == ('0.3.1', '4', SOURCE_COMMIT, '26.0'), 'Unexpected app identity')
     run('codesign', '--verify', '--deep', '--strict', '--verbose=2', str(app))
     signature = run('codesign', '-dvv', str(app)).stdout
     require('Authority=Developer ID Application: Ray Zhu (6G8K3FNTVJ)' in signature
             and 'TeamIdentifier=6G8K3FNTVJ' in signature and '(runtime)' in signature
             and 'Timestamp=' in signature, 'Unexpected signing state')
     run('lipo', str(app / 'Contents/MacOS/Nightwing macOS'), '-verify_arch', 'arm64', 'x86_64')
-    require(not (app / 'Contents/Resources/yt-dlp').exists(), 'Unexpected bundled downloader')
+    media_check = run('python3', str(ROOT / 'scripts/build-media-tools.py'), '--verify', str(app))
+    (DIST / 'MEDIA-TOOLS-VERIFICATION.log').write_text(media_check.stdout)
     # Verify all five bundled documents against the clean build commit.
     for name in ('INSTALL.md', 'RELEASE_NOTES.md', 'PRIVACY.md', 'THIRD_PARTY_NOTICES.md', 'LICENSE.txt'):
         expected = subprocess.check_output(['git', 'show', f'{SOURCE_COMMIT}:docs/Public/{name}'], cwd=ROOT)
@@ -77,9 +79,9 @@ with tempfile.TemporaryDirectory(prefix='nightwing-preview-', dir='/private/tmp'
             f'Unexpected staple result: {staple.stdout}')
     run('ditto', str(app), str(package / 'Nightwing.app'))
     shutil.copytree(ROOT / 'docs/Public', package / 'Documentation')
-    read_first = '''# Nightwing 0.3.0 (3) — Developer Preview
+    read_first = '''# Nightwing 0.3.1 (4) — Developer Preview
 
-GitHub-only opt-in prerelease, NOT a production release. Developer ID signed by Ray Zhu
+Locally prepared candidate; NOT published and NOT a production release. Developer ID signed by Ray Zhu
 (team 6G8K3FNTVJ), NOT notarized; no stapled ticket. Gatekeeper first-open blocking is expected.
 Requires macOS 26.0+; universal arm64/x86_64. Physical Intel hardware was not tested.
 
@@ -91,11 +93,12 @@ IMPORTANT: Nightwing.app was rebuilt from the clean source commit recorded in CA
 then Developer ID signed. Bundled and external guides both describe this unnotarized preview.
 No notarization is claimed. The earlier historical RC is NOT the released app.
 
-See CANDIDATE.json for the embedded source commit (0.3.0 build 3).
+See CANDIDATE.json for the embedded source commit (0.3.1 build 4).
 Check the preview ZIP with its adjacent .sha256 file.
 
-Core local playback/imports work offline. Online downloads require separately installed yt-dlp,
-ffmpeg/ffprobe and supported JavaScript runtime (Deno recommended); these are NOT bundled.
+Core local playback/imports work offline. Online tools (yt-dlp, CPython, FFmpeg/ffprobe, Node
+and EJS) are bundled, with exact notices, inventory and FFmpeg corresponding source inside the app.
+No Homebrew or other user-installed media tools are required.
 Read Documentation/PRIVACY.md before online search, lyrics, downloads, OAuth or optional
 model/runtime provisioning. Back up the application-support directory and original music first.
 
@@ -103,8 +106,10 @@ No automatic updater. Best-effort non-sensitive issues: https://github.com/rayzh
 Never post credentials, full library data, private paths, playlists or audio in public issues.
 '''
     (package / 'READ-FIRST.md').write_text(read_first)
-    identity = dict(version='0.3.0', build='3', channel='GitHub-only Developer Preview',
+    identity = dict(version='0.3.1', build='4', channel='Local Developer Preview candidate',
                     sourceCommit=SOURCE_COMMIT, buildFromCleanHEAD=True,
+                    bundledMediaTools=json.loads((app / 'Contents/Resources/MediaTools/INVENTORY.json').read_text())['versions'],
+                    mediaInventorySHA256=sha(app / 'Contents/Resources/MediaTools/INVENTORY.json'),
                     architectures=['arm64', 'x86_64'], minimumMacOS='26.0',
                     signature='Developer ID Application: Ray Zhu (6G8K3FNTVJ); hardened runtime; timestamped',
                     notarized=False, stapled=False, gatekeeper='rejected: Unnotarized Developer ID',

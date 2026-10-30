@@ -10,7 +10,7 @@ Local-first music playback with a Nightcore twist. Built with SwiftUI for macOS 
 
 - **Nightcore, built in.** Nightcore is a music genre which speeds up music by sqrt(2), resulting in a pitch shift of +6 semitones. Nightwing also allows speed and pitch to be adjusted.
 - **A local library that stays yours.** Albums, playlists, queues, watched folders and FLAC support. Imported audio is referenced in place, not modified.
-- **Discover and play.** Browse YouTube Music, preview albums and optionally download audio on macOS with separately installed tools.
+- **Discover and play.** Browse YouTube Music, preview albums and optionally download audio on macOS with the bundled media tools (current 0.3.1 candidate).
 - **Lyrics when you want them.** Synced lyrics from LRCLIB, or optional on-device transcription on macOS. Online lyric lookup starts off for new profiles.
 - **Bring your playlists.** Optional YouTube/YouTube Music and Spotify connections import playlist metadata, match local songs and preserve source links—not service audio.
 
@@ -24,13 +24,11 @@ Local-first music playback with a Nightcore twist. Built with SwiftUI for macOS 
 
 ### Optional extras
 
-For online downloads/playback, install **yt-dlp**, **ffmpeg/ffprobe** and a supported JavaScript runtime (Deno recommended). If you already use Homebrew:
+The **0.3.1 (4) candidate** bundles yt-dlp, FFmpeg/ffprobe, CPython and Node with its JavaScript solver. No Homebrew or user-installed media tools are needed. Tools are versioned and update only when you replace the app. Exact licences, inventory and FFmpeg corresponding source accompany the app.
 
-```sh
-brew install yt-dlp ffmpeg deno
-```
+The download link above still points to the older **0.3.0 (3)** preview, which did not bundle online tools. The new candidate is locally prepared, **not published or notarized**; no existing release assets have been replaced.
 
-These tools are not bundled or installed by Nightwing. Use only content you are entitled to download and follow provider terms. See [optional feature setup](docs/Public/INSTALL.md#optional-features) for lyrics and transcription; [playlist connection setup](docs/Public/CONNECTIONS.md) requires your own Google/Spotify developer clients.
+Use only content you are entitled to download and follow provider terms. See [optional feature setup](docs/Public/INSTALL.md#optional-features) for lyrics and transcription; [playlist connection setup](docs/Public/CONNECTIONS.md) requires your own Google/Spotify developer clients.
 
 ## Help and project details
 

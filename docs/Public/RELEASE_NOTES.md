@@ -1,6 +1,8 @@
-## What's new in 0.3.0 (3)
+**Local candidate only: 0.3.1 (4) is not yet published or notarized. The existing 0.3.0 GitHub preview is unchanged.**
 
-[Download the Mac Developer Preview](https://github.com/rayzhudev/nightwing/releases/tag/v0.3.0-dev-preview.1) · [Install guide](INSTALL.md)
+## What's new in 0.3.1 (4)
+
+[Download the Mac Developer Preview](https://github.com/rayzhudev/nightwing/releases/tag/v0.3.1-dev-preview.1) · [Install guide](INSTALL.md)
 
 Changes since 0.2.0:
 
@@ -9,7 +11,7 @@ Changes since 0.2.0:
 - **Better lyrics workflow:** serial, cancellable generation with priority/retry controls; reuse of synced/plain lyrics and instrumental metadata when lookup is enabled.
 - **Library and playback improvements:** recursive watched-folder updates, imported-playlist refresh, queue/bookmark handling, playback progress and download diagnostics.
 - **Privacy & Help settings:** privacy, attribution, licensing, installation and recovery guides. Online lyric lookup defaults off for new profiles.
-- **Optional online tools:** downloads use your separately installed yt-dlp, ffmpeg and supported JavaScript runtime, not a bundled downloader. On-device transcription remains available on demand.
+- **Optional online tools:** downloads use bundled universal yt-dlp, CPython, FFmpeg/ffprobe, Node and EJS; no Homebrew setup is required. Tool updates come only with a replacement app. Exact inventory, notices and required corresponding source accompany the app. On-device transcription remains available on demand.
 
 ### Before installing
 

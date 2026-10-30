@@ -2,12 +2,12 @@
 
 Requires **macOS 26.0 or later**, on Apple Silicon or Intel. Local music playback needs no account or additional software.
 
-> **Developer Preview:** Nightwing 0.3.0 (3) is Developer ID signed by Ray Zhu (team `6G8K3FNTVJ`) but **not notarized**, so macOS requires a first-launch exception. Use the per-app **Open Anyway** flow below. On macOS versions that offer it, Finder **right-click > Open** may present the confirmation directly; if it does not, use System Settings. A signature is not Apple notarization.
+> **Developer Preview:** Nightwing 0.3.1 (4) is Developer ID signed by Ray Zhu (team `6G8K3FNTVJ`) but **not notarized**, so macOS requires a first-launch exception. Use the per-app **Open Anyway** flow below. On macOS versions that offer it, Finder **right-click > Open** may present the confirmation directly; if it does not, use System Settings. A signature is not Apple notarization.
 
-1. **Download** the [preview ZIP and its matching `.sha256`](https://github.com/rayzhudev/nightwing/releases/tag/v0.3.0-dev-preview.1). In Terminal, switch to the download directory and verify:
+1. **Obtain the candidate ZIP and its matching `.sha256`** from the app owner. This guide describes the locally prepared **0.3.1 (4)** candidate, not yet published. The existing GitHub release is the older 0.3.0 preview and does not contain these bundled tools. In Terminal, switch to the candidate directory and verify:
 
    ```sh
-   shasum -a 256 -c Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256
+   shasum -a 256 -c Nightwing-0.3.1-b4-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256
    ```
 
    Check that the result is `OK`. The checksum checks file integrity; the release page and package `CANDIDATE.json` identify the build.
@@ -27,13 +27,11 @@ If device-management policy prevents this exception, contact your administrator.
 
 ### Online discovery, downloads and playback
 
-Discovery depends on Google service availability. Downloads and online playback require separately installed **yt-dlp**, **ffmpeg/ffprobe** and a [JavaScript runtime supported by yt-dlp](https://github.com/yt-dlp/yt-dlp/wiki/EJS) (Deno recommended). With Homebrew already installed:
+Online downloads/playback include **yt-dlp 2026.10.26**, **FFmpeg/ffprobe 8.1.3**, **CPython 3.14.10**, **Node 24.22.2** and the supported EJS solver. **No Homebrew or additional tool installation is required.** Both Apple Silicon and Intel payloads are included. Discovery and extraction still depend on source availability and provider changes.
 
-```sh
-brew install yt-dlp ffmpeg deno
-```
+Nightwing runs only its sealed bundled tools, ignores external downloader configuration/plugins and does not self-update helpers. **Settings > Privacy & Help** lists the bundled versions. To update tools, replace the complete app with a verified newer Nightwing build; never edit executables inside the signed app. If tools are missing or damaged, reinstall the complete app. Exact binary hashes, notices and FFmpeg corresponding source are inside `Nightwing.app/Contents/Resources/MediaTools` (Finder: **Show Package Contents**). See [third-party notices](THIRD_PARTY_NOTICES.md).
 
-Nightwing searches `PATH`, `/opt/homebrew/bin` and `/usr/local/bin`. It does not install Homebrew or these tools, or use an old bundled helper. Updates and licences for these tools are managed by your installation. Only download content you are entitled to use and comply with provider terms.
+Only download content you are entitled to use and comply with provider terms. Bundling software is not permission to copy media or a guarantee that every site works.
 
 ### Lyrics and transcription
 
@@ -61,10 +59,10 @@ To uninstall, disconnect connected services while online, revoke access through 
 - To erase settings, recent searches and client IDs, run `defaults delete com.rayzhu.nightwing.macos` while the app is quit.
 - In Keychain Access, remove only retained entries for `com.rayzhu.nightwing.music-services` and `com.rayzhu.nightwing.oauth-client-secrets`, not unrelated items.
 
-External tools, pre-existing Python environments and `~/.cache/huggingface` may be shared with other software; manage these separately. Local deletion does not delete cloud playlists, provider logs or backups elsewhere.
+Pre-existing external tools or Python environments and `~/.cache/huggingface` may be shared with other software; manage these separately. Local deletion does not delete cloud playlists, provider logs or backups elsewhere.
 
 ## Preview limits and support
 
-Native Apple Silicon and Rosetta were tested, not physical Intel hardware or every audio device/codec. Real provider sign-in/revocation and the quarantined Finder/Open Anyway interaction remain manual acceptance items; the instructions above are not a claim of completed interactive testing. Optional dependencies are version-bounded, not fully locked, and provider changes can interrupt online extraction. See [verification details](https://github.com/rayzhudev/nightwing/blob/main/docs/RELEASE_READINESS.md).
+Native Apple Silicon and Rosetta were tested, not physical Intel hardware or every audio device/codec. Real provider sign-in/revocation and the quarantined Finder/Open Anyway interaction remain manual acceptance items; the instructions above are not a claim of completed interactive testing. Bundled online tools are hash-locked; optional transcription dependencies are version-bounded, not fully locked, and provider changes can interrupt online extraction. See [verification details](https://github.com/rayzhudev/nightwing/blob/main/docs/RELEASE_READINESS.md).
 
-[Report non-sensitive bugs](https://github.com/rayzhudev/nightwing/issues), checking existing issues first. Include **0.3.0 (3)**, the ZIP filename/checksum, macOS version, CPU architecture, steps, expected/actual behavior and exact error. Support is best-effort. Do not post tokens, client secrets, full library databases, personal paths, private playlists or audio. No private support intake is configured.
+[Report non-sensitive bugs](https://github.com/rayzhudev/nightwing/issues), checking existing issues first. Include **0.3.1 (4)**, the ZIP filename/checksum, macOS version, CPU architecture, steps, expected/actual behavior and exact error. Support is best-effort. Do not post tokens, client secrets, full library databases, personal paths, private playlists or audio. No private support intake is configured.

@@ -14,7 +14,6 @@ RELEASE_DERIVED_DATA_DIR="/private/tmp/nightwing-release-derived-data-macos"
 ARCHIVE_PATH="$RELEASE_ROOT/Nightwing.xcarchive"
 ARCHIVED_APP_PATH="$ARCHIVE_PATH/Products/Applications/Nightwing macOS.app"
 RELEASE_APP_PATH="$RELEASE_ROOT/Nightwing.app"
-RELEASE_YTDLP_PATH="$RELEASE_APP_PATH/Contents/Resources/yt-dlp"
 FINAL_ZIP_PATH="$RELEASE_ROOT/Nightwing-macOS.zip"
 FINAL_ZIP_CHECKSUM_PATH="$FINAL_ZIP_PATH.sha256"
 RELEASE_TEMP_DIR=""
@@ -56,6 +55,8 @@ build_local() {
     sleep 1
     rm -rf "$LOCAL_PUBLISHED_APP_PATH"
     ditto "$LOCAL_BUILT_APP_PATH" "$LOCAL_PUBLISHED_APP_PATH"
+    python3 "$PROJECT_DIR/scripts/build-media-tools.py" --stage "$LOCAL_PUBLISHED_APP_PATH"
+    codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_IDENTITY" "$LOCAL_PUBLISHED_APP_PATH"
 
     echo "Restarting Nightwing..."
     open "$LOCAL_PUBLISHED_APP_PATH"
@@ -138,12 +139,7 @@ build_release() {
   fi
   echo "Release binary includes Apple Silicon and Intel architectures."
 
-  # The historical upstream PyInstaller helper is GPLv3+ with corresponding-source
-  # obligations. Public beta uses optional user-installed tools, never that binary.
-  if [[ -e "$RELEASE_YTDLP_PATH" ]]; then
-    echo "Unexpected bundled yt-dlp: refusing to redistribute a stale helper."
-    return 1
-  fi
+  python3 "$PROJECT_DIR/scripts/build-media-tools.py" --stage "$RELEASE_APP_PATH"
   local source_commit="$(git rev-parse HEAD)"
   /usr/libexec/PlistBuddy -c "Add :NightwingSourceCommit string $source_commit" "$RELEASE_APP_PATH/Contents/Info.plist"
   for document in PRIVACY.md THIRD_PARTY_NOTICES.md LICENSE.txt INSTALL.md RELEASE_NOTES.md; do
@@ -196,10 +192,9 @@ build_release() {
   ditto -x -k "$FINAL_ZIP_PATH" "$RELEASE_VERIFY_ROOT"
 
   local verified_app_path="$RELEASE_VERIFY_ROOT/Nightwing.app"
-  local verified_ytdlp_path="$verified_app_path/Contents/Resources/yt-dlp"
   local verified_binary_path="$verified_app_path/Contents/MacOS/Nightwing macOS"
-  if [[ ! -d "$verified_app_path" || -e "$verified_ytdlp_path" ]]; then
-    echo "The final zip did not contain the expected optional-downloader app."
+  if [[ ! -d "$verified_app_path" || ! -e "$verified_app_path/Contents/Resources/MediaTools/INVENTORY.json" ]]; then
+    echo "The final zip did not contain the expected bundled-media app."
     return 1
   fi
 

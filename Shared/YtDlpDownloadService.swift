@@ -390,33 +390,38 @@ actor YtDlpDownloadService {
         locateYtDlpCandidates().first
     }
 
-    static func locateYtDlpCandidates() -> [String] {
-        var candidates: [String] = []
-        var seen = Set<String>()
-
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
-            for dir in path.components(separatedBy: ":") {
-                let candidate = (dir as NSString).appendingPathComponent("yt-dlp")
-                appendExecutableCandidate(candidate, to: &candidates, seen: &seen)
-            }
-        }
-
-        for path in ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp"] {
-            appendExecutableCandidate(path, to: &candidates, seen: &seen)
-        }
-
-        return candidates
+    /// Only run the sealed, versioned payload. Never resolve user PATH/plugins.
+    static var bundledMediaToolsDirectory: URL? {
+        guard let executable = Bundle.main.executableURL,
+              let resources = Bundle.main.resourceURL,
+              FileManager.default.fileExists(atPath: resources.appendingPathComponent("MediaTools/INVENTORY.json").path) else { return nil }
+        return executable.deletingLastPathComponent().appendingPathComponent("MediaTools", isDirectory: true)
     }
 
-    private static func appendExecutableCandidate(_ path: String, to candidates: inout [String], seen: inout Set<String>) {
-        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-        guard !seen.contains(standardizedPath),
-              FileManager.default.isExecutableFile(atPath: standardizedPath) else {
-            return
-        }
+    static func locateYtDlpCandidates() -> [String] {
+        guard let directory = bundledMediaToolsDirectory,
+              ["yt-dlp", "ffmpeg", "ffprobe", "node"].allSatisfy({
+                  FileManager.default.isExecutableFile(atPath: directory.appendingPathComponent($0).path)
+              }) else { return [] }
+        return [directory.appendingPathComponent("yt-dlp").path]
+    }
 
-        seen.insert(standardizedPath)
-        candidates.append(standardizedPath)
+    static var bundledMediaToolsSummary: String {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("MediaTools/INVENTORY.json"),
+              let data = try? Data(contentsOf: url),
+              let inventory = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let versions = inventory["versions"] as? [String: String] else {
+            return "Bundled media tools are missing. Reinstall the complete signed app."
+        }
+        return versions.keys.sorted().map { "\($0) \(versions[$0]!)" }.joined(separator: " · ")
+    }
+
+    static func verifyBundledDownloader() async throws -> String {
+        guard let executable = locateYtDlp() else { throw YtDlpError.notFound }
+        let result = try await executeProcess(executable: executable, arguments: ["--version"],
+            aggregatesPlaylistProgress: false, progressHandler: nil, timeoutNanoseconds: 15_000_000_000)
+        guard result.terminationStatus == 0 else { throw YtDlpError.commandFailed(diagnosticMessage(from: result.output)) }
+        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func downloadsBaseURL() -> URL {
@@ -789,7 +794,10 @@ actor YtDlpDownloadService {
         process.arguments = downloaderRuntimeArguments() + arguments
         // Finder-launched apps do not inherit the user's shell PATH. Also make
         // ffmpeg/ffprobe available for audio extraction and album downloads.
-        var environment = ProcessInfo.processInfo.environment
+        guard !locateYtDlpCandidates().isEmpty else { throw YtDlpError.notFound }
+        var environment = ProcessInfo.processInfo.environment.filter {
+            !$0.key.hasPrefix("DYLD_") && !$0.key.hasPrefix("PYTHON")
+        }
         environment["PATH"] = downloaderSearchDirectories().joined(separator: ":")
         process.environment = environment
 
@@ -878,26 +886,15 @@ actor YtDlpDownloadService {
     }
 
     static func downloaderSearchDirectories() -> [String] {
-        var directories = (ProcessInfo.processInfo.environment["PATH"] ?? "")
-            .components(separatedBy: ":").filter { !$0.isEmpty }
-        directories += ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
-                        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".deno/bin").path]
-        var seen = Set<String>()
-        return directories.filter { seen.insert($0).inserted }
+        [bundledMediaToolsDirectory?.path, "/usr/bin", "/bin"].compactMap { $0 }
     }
 
     static func downloaderRuntimeArguments() -> [String] {
-        // yt-dlp only enables Deno by default. Enable an installed supported
-        // runtime explicitly and use an absolute path for GUI launches.
-        for runtime in ["deno", "node"] {
-            for directory in downloaderSearchDirectories() {
-                let path = URL(fileURLWithPath: directory).appendingPathComponent(runtime).path
-                if FileManager.default.isExecutableFile(atPath: path) {
-                    return ["--js-runtimes", "\(runtime):\(path)"]
-                }
-            }
-        }
-        return []
+        guard let directory = bundledMediaToolsDirectory else { return [] }
+        let cache = onlineDownloadsBaseURL().deletingLastPathComponent().appendingPathComponent("Downloader Cache")
+        return ["--ignore-config", "--no-plugin-dirs", "--no-update", "--no-remote-components",
+                "--no-js-runtimes", "--js-runtimes", "node:\(directory.appendingPathComponent("node").path)",
+                "--ffmpeg-location", directory.path, "--cache-dir", cache.path]
     }
 
     static func diagnosticMessage(from output: String) -> String {
@@ -2000,7 +1997,7 @@ enum YtDlpError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notFound:
-            return "Online downloads require yt-dlp installed by you. Install yt-dlp, ffmpeg and a supported JavaScript runtime; see Settings > Privacy & Help > Install & recovery."
+            return "The bundled media tools are missing or incomplete. Reinstall the complete signed Nightwing app; no Homebrew installation is needed. See Settings > Privacy & Help > Install & recovery."
         case let .downloadFailed(message):
             return "Download failed: \(message)"
         case let .commandFailed(command):

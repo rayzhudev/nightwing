@@ -1,31 +1,15 @@
-## 0.3.0 (3) Developer Preview readiness
+## 0.3.1 (4) local bundled-media candidate readiness
 
-**GO for the user-authorised GitHub-only public prerelease**, using the freshly rebuilt wrapper/checksum and generated release body described in [DEVELOPER_PREVIEW.md](DEVELOPER_PREVIEW.md). This is not production/general-availability approval.
+**Local candidate preparation only. Not published, not notarized, no GitHub release asset replacement.** Existing 0.3.0 preview is unchanged. Publication needs a separate explicit instruction.
 
-### Release build verification
+### Scope and evidence
 
-The preview builder requires a clean committed source tree and records its full commit, version 0.3.0 (3), exact ZIP SHA-256 and verification outcome in ignored `dist/DEVELOPER-PREVIEW-VERIFICATION.json`. It verifies timestamped Developer ID signature (Ray Zhu, team 6G8K3FNTVJ), hardened runtime, macOS 26.0+ arm64/x86_64 slices, no bundled yt-dlp, matching bundled/external guides, expected unnotarized Gatekeeper rejection/no ticket and exact extracted app bytes/modes. These checks run against the new build; historical functional results below are not represented as freshly rerun.
+The new payload uses a repository C launcher plus PSF CPython and pure yt-dlp/EJS/certifi source wheels, universal source-built LGPL-only FFmpeg/ffprobe, and official Node architecture binaries merged into universal code. The historical GPLv3+ PyInstaller binary is not restored. Complete required source accompanies the tools instead of an unsubstantiated source offer. See DEPENDENCY_PROVENANCE.md and THIRD_PARTY_NOTICES.md for the exact inventory/licensing boundary.
 
-The freshly built app replaces the old RC. Both in-app and external guides now describe the unnotarized preview. Only the final ZIP and checksum are release assets; no updater/production-readiness claim is made.
+Universal Swift compilation and the isolated regression suite pass: 18 XCTest plus 23 Swift Testing tests. Final clean-commit packaging and exact-artifact media acceptance are recorded in the generated dist reports and the final evidence section below. Each helper/native module is individually Developer ID signed with hardened runtime; only Node has JIT entitlement, and the CPython launcher has JIT plus unsigned executable memory for system libffi on Intel/Rosetta. Library validation is not disabled. The outer app is signed last. This is not Apple notarization.
 
-### Completed audit/remediation, not rerun in this documentation/package task
+Online execution ignores user configurations/plugins, never substitutes Homebrew tools or the transcription engine, uses bundled Node/EJS and FFmpeg absolute paths, and scopes media/cache to Nightwing's profile. Settings shows the immutable bundled versions; updates require replacing the whole app. The media fixture exercises real download, forced WAV-to-AAC extraction, import and audio-engine progression in disposable profiles with PATH limited to /usr/bin:/bin. No existing library, accounts or original audio are used.
 
-- Historical downloader identified as upstream GPLv3+ combined work; removed from source/distribution instead of inventing a corresponding-source offer. Current optional user-installed yt-dlp/ffmpeg/runtime requirements are disclosed.
-- Isolated test preferences/support/model paths and no real Keychain accounts; XCTest hosts do not start app-wide background library work. 41 tests passed (18 XCTest + 23 Swift Testing).
-- Exact signed original candidate: native arm64 and Rosetta x86_64 core smoke, outbound-network-denied local acceptance, WAV/AIFF/FLAC/M4A decode, real playback/progress/pause/seek/stop, missing/corrupt audio and library recovery passed.
-- Fresh isolated profile: managed Python 3.12.13, faster-whisper 1.2.1, pinned model/hash checks and local inference passed. Evidence remains in ignored `dist/verification-20261029T130210Z/`.
-- Earlier private QA incident is recorded in `dist/QA-NOTES.md`; do not claim the earlier audit never touched the real library. This preview preparation does not launch the app or access/change user library data.
+### Remaining acceptance boundaries
 
-### Explicit limits / manual acceptance
-
-- [ ] Actual quarantined Finder launch and System Settings > Privacy & Security > Open Anyway interaction. Documented procedure is not claimed as observed.
-- [ ] Physical Intel hardware / all output devices and codecs (Rosetta is not physical Intel).
-- [ ] Real Google/Spotify sign-in with bring-your-own developer clients and provider-side revocation confirmation.
-
-These are disclosed preview limitations, not passed production acceptance gates. Runtime transitive dependencies are version-bounded but not fully locked. Online functionality depends on upstream services/tools. No provider approval or project-wide open-source licence is claimed.
-
-### Separate future notarized-release path
-
-Apple notarytool previously returned HTTP 403 because a required developer agreement is missing/expired. No agreement, account, identity or credentials were changed here. `./Rebuild Nightwing.command --release` remains the future clean-commit signed/notarized release builder, not the preview packaging command. After an authorised owner resolves that issue, a new accepted/stapled candidate and exact quarantined Gatekeeper/Launch Services verification are required before claiming a notarized release. The preview builder intentionally does not run notarytool; no credentials or account agreements are changed.
-
-Before publication, verify the exact local preview checksum and generated release body. Keep the GitHub release **prerelease, not latest production**. Do not upload private QA artifacts or the bare original RC ZIP.
+Physical Intel hardware, quarantined Finder/Open Anyway interaction, real provider OAuth/revocation and every device/codec remain unverified. Public provider extraction can be blocked or changed independently of a working bundled toolchain; exact probe results are recorded, not converted into a blanket online-availability claim. Optional transcription/runtime/model acceptance from earlier releases is historical, not freshly rerun here. Provider terms and media rights still apply. No unresolved matching-source block is identified for this deliberately limited payload, but this is an engineering licence inventory, not a legal opinion or guarantee about unrelated optional builds.
