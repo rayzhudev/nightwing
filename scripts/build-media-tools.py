@@ -77,6 +77,10 @@ def prepare():
         if p.is_file() and ('license' in p.name.lower() or 'copying' in p.name.lower()):
             destination=notices/'PythonPackages'/p.relative_to(packages);destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,destination)
     shutil.copy2(source/'LICENSE',notices/'CPython-LICENSE.txt')
+    # CPython's top-level PSF text alone omits incorporated-code/data notices.
+    # Preserve its full third-party licence appendix, SPDX inventory and source.
+    shutil.copy2(source/'Doc/license.rst',notices/'CPython-THIRD-PARTY-LICENSES.rst')
+    shutil.copy2(source/'Misc/sbom.spdx.json',notices/'CPython-source-sbom.spdx.json')
     shutil.copy2(source/'Modules/expat/COPYING',notices/'Expat-COPYING.txt')
     shutil.copytree(source/'Modules/_hacl',notices/'HACL-source-and-notices')
     for e in LOCK:
@@ -114,7 +118,7 @@ def prepare():
     # with EVERY app, not an unfulfilled future written source offer.
     sources=resources/'CorrespondingSource';sources.mkdir()
     for entry in LOCK:
-        if entry['file'].startswith('ffmpeg-') or entry['file'].endswith('.whl'):shutil.copy2(DOWNLOADS/entry['file'],sources/entry['file'])
+        if entry['file'].startswith(('ffmpeg-','Python-')) or entry['file'].endswith('.whl'):shutil.copy2(DOWNLOADS/entry['file'],sources/entry['file'])
     for name in ('build-media-tools.py','media-tools.lock.json','media-launcher.c','node-entitlements.plist','python-entitlements.plist','rebuild-ffmpeg.sh'):shutil.copy2(ROOT/'scripts'/name,sources/name)
     (sources/'README.txt').write_text('FFmpeg is unmodified 8.1.3, configured LGPL-only, static, with no non-system external libraries. Exact source archive and build recipe are here. Run ./rebuild-ffmpeg.sh on macOS with Xcode command-line tools; it verifies the source hash and rebuilds both architectures without needing other downloads. The full app build-media-tools.py recipe is also included. No proprietary object is linked with FFmpeg. Python-package wheels include their source (including MPL-2.0 certifi). No GPL PyInstaller combined executable is redistributed.\n')
     shutil.copy2(ROOT/'scripts/media-tools.lock.json',resources/'INPUTS.json')
