@@ -2,7 +2,7 @@ Local-first music playback with a Nightcore twist. Built with SwiftUI for macOS 
 
 [**Download for macOS**](https://github.com/rayzhudev/nightwing/releases/tag/v0.3.0-dev-preview.1) · [Install guide](docs/Public/INSTALL.md) · [Release notes](docs/Public/RELEASE_NOTES.md) · [Report an issue](https://github.com/rayzhudev/nightwing/issues)
 
-![Nightwing on macOS showing the music library, album artwork, sidebar and playback controls](docs/images/nightwing-macos-library.jpg)
+![Nightwing on macOS showing the music library, album artwork, sidebar and playback controls](docs/images/nightwing-macos-library.png)
 
 > **Developer Preview · 0.3.0 (3)** — Requires **macOS 26+**, on Apple Silicon or Intel. The app is Developer ID signed but **not notarized**. For the first launch, use macOS **Open Anyway** as described in the [short install guide](docs/Public/INSTALL.md#install). This is an evaluation build; updates are installed manually. No iPhone binary is available yet.
 
@@ -25,9 +25,7 @@ Local-first music playback with a Nightcore twist. Built with SwiftUI for macOS 
 
 ### Optional extras
 
-The **0.3.1 (4) candidate** bundles yt-dlp, FFmpeg/ffprobe, CPython and Node with its JavaScript solver. No Homebrew or user-installed media tools are needed. Tools are versioned and update only when you replace the app. Exact licences, inventory and FFmpeg corresponding source accompany the app.
-
-The download link above still points to the older **0.3.0 (3)** preview, which did not bundle online tools. The new candidate is locally prepared, **not published or notarized**; no existing release assets have been replaced.
+Online downloads in the current Developer Preview require locally installed media tools. See [optional feature setup](docs/Public/INSTALL.md#optional-features) for the short setup path.
 
 Use only content you are entitled to download and follow provider terms. See [optional feature setup](docs/Public/INSTALL.md#optional-features) for lyrics and transcription; [playlist connection setup](docs/Public/CONNECTIONS.md) requires your own Google/Spotify developer clients.
 
