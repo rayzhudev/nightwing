@@ -11,7 +11,7 @@ Local-first music playback with a Nightcore twist. Built with SwiftUI for macOS 
 - **Nightcore Playback.** Increase playback speed by √2 for a +6-semitone pitch shift, or adjust speed and pitch independently.
 - **Local Library Playback.** Play imported audio files and folders, including FLAC, with albums, playlists, queues and watched folders. Original audio files are not modified.
 - **Download Songs from YouTube Music.** Search for songs and albums, download audio, and play it in Nightwing on macOS.
-- On-Device Generated Lyrics. On-device transcription on macOS using the Whisper Small model (Systran/faster-whisper-small). Synced lyrics from LRCLIB when available.
+- **On-Device Generated Lyrics.** On-device transcription on macOS using the Whisper Small model (Systran/faster-whisper-small). Synced lyrics from LRCLIB when available.
 - **Import Playlists from Spotify and YouTube.** Import playlist metadata and order, and match locally available tracks. Service audio is not imported.
 - **macOS Accent Colour.** Controls, highlights and selection use your macOS accent colour by default. Choose a custom colour in Settings > Appearance.
 
