@@ -152,7 +152,8 @@ def stage(app, identity):
             if ' (compatibility ' in line:
                 dep=line.strip().split(' (')[0]
                 if dep.startswith('/') and not dep.startswith(('/usr/lib/','/System/Library/')):raise RuntimeError('External linked dependency: '+dep)
-        native_evidence.append(dict(path=str(p.relative_to(app/'Contents')),signature=signature,linkedLibraries=linked))
+        entitlements=subprocess.check_output(['codesign','-d','--entitlements',':-',str(p)],stderr=subprocess.DEVNULL,text=True) if p.name in ('node','yt-dlp') else ''
+        native_evidence.append(dict(path=str(p.relative_to(app/'Contents')),signature=signature,linkedLibraries=linked,entitlements=entitlements))
     resources=app/'Contents/Resources/MediaTools'
     (resources/'NATIVE.json').write_text(json.dumps(native_evidence,indent=2)+'\n')
     inventory=[]
@@ -170,6 +171,10 @@ def verify(app):
         p=app/'Contents/MacOS/MediaTools'/name
         run('codesign','--verify','--strict',p);run('lipo',p,'-verify_arch','arm64','x86_64')
         for arch in ('arm64','x86_64'):subprocess.run(['/usr/bin/arch','-'+arch,str(p)]+(['--ignore-config','--no-plugin-dirs','--no-update','--version'] if name=='yt-dlp' else ['--version' if name=='node' else '-version']),check=True,timeout=20)
+        if name=='node':
+            for arch in ('arm64','x86_64'):
+                output=subprocess.check_output(['/usr/bin/arch','-'+arch,str(p),'-e','console.log(6*7)'],text=True,timeout=20)
+                if output.strip()!='42':raise RuntimeError('Node JavaScript execution failed: '+arch)
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--stage',type=Path);parser.add_argument('--verify',type=Path);parser.add_argument('--identity',default='Developer ID Application: Ray Zhu (6G8K3FNTVJ)');args=parser.parse_args()
     if args.verify:verify(args.verify)

@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix='nightwing-bundled-media-',dir='/private
             (evidence/(arch+'-smoke.json')).write_text(json.dumps(report,indent=2)+'\n')
             # Real HTTPS request using bundled certificate package and isolated CPython.
             # Public yt-dlp test video: no cookies/account use; provider failure is logged separately.
-            command=['/usr/bin/arch','-'+arch,str(tools/'yt-dlp'),'--ignore-config','--no-plugin-dirs','--no-update','--no-remote-components','--no-js-runtimes','--js-runtimes','node:'+str(tools/'node'),'--verbose','--simulate','--socket-timeout','15','--retries','0','https://www.youtube.com/watch?v=jNQXAC9IVRw']
+            command=['/usr/bin/arch','-'+arch,str(tools/'yt-dlp'),'--ignore-config','--no-plugin-dirs','--no-update','--no-remote-components','--ffmpeg-location',str(tools),'--no-js-runtimes','--js-runtimes','node:'+str(tools/'node'),'--verbose','--simulate','--socket-timeout','15','--retries','0','https://www.youtube.com/watch?v=jNQXAC9IVRw']
             try:
                 online=subprocess.run(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=90)
                 (evidence/(arch+'-online.log')).write_text(online.stdout)

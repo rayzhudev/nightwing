@@ -15,6 +15,7 @@ int main(int argc, char **argv) {
     snprintf(home, sizeof(home), "%s/../../Resources/MediaTools/python", resolved);
     PyConfig config; PyConfig_InitIsolatedConfig(&config);
     config.site_import = 0; config.write_bytecode = 0; config.parse_argv = 0;
+    config.install_signal_handlers = 1; /* Normal CLI SIGPIPE/SIGINT handling. */
     checked(PyConfig_SetBytesString(&config, &config.home, home));
     checked(PyConfig_SetBytesArgv(&config, argc, argv));
     config.module_search_paths_set = 1;

@@ -156,6 +156,7 @@ build_release() {
     "$RELEASE_APP_PATH"
 
   codesign --verify --deep --strict --verbose=2 "$RELEASE_APP_PATH"
+  python3 "$PROJECT_DIR/scripts/build-media-tools.py" --verify "$RELEASE_APP_PATH"
 
   echo
   codesign -dvv "$RELEASE_APP_PATH" 2>&1 | grep -F "runtime"
