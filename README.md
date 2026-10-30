@@ -8,7 +8,7 @@ Local-first music playback with a Nightcore twist. Built with SwiftUI for macOS 
 
 ## Your music, your pace
 
-- **Nightcore, built in.** The default preset plays at √2 speed with a +6-semitone pitch lift. Adjust speed and pitch independently, too.
+- **Nightcore, built in.** Nightcore is a music genre which speeds up music by sqrt(2), resulting in a pitch shift of +6 semitones. Nightwing also allows speed and pitch to be adjusted.
 - **A local library that stays yours.** Albums, playlists, queues, watched folders and FLAC support. Imported audio is referenced in place, not modified.
 - **Discover and play.** Browse YouTube Music, preview albums and optionally download audio on macOS with separately installed tools.
 - **Lyrics when you want them.** Synced lyrics from LRCLIB, or optional on-device transcription on macOS. Online lyric lookup starts off for new profiles.
