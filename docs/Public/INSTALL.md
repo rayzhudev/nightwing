@@ -4,7 +4,7 @@ Requires **macOS 26.0 or later**, on Apple Silicon or Intel. Local music playbac
 
 > **Developer Preview:** Nightwing 0.3.1 (4) is Developer ID signed by Ray Zhu (team `6G8K3FNTVJ`) but **not notarized**, so macOS requires a first-launch exception. Use the per-app **Open Anyway** flow below. On macOS versions that offer it, Finder **right-click > Open** may present the confirmation directly; if it does not, use System Settings. A signature is not Apple notarization.
 
-1. **Obtain the candidate ZIP and its matching `.sha256`** from the app owner. This guide describes the locally prepared **0.3.1 (4)** candidate, not yet published. The existing GitHub release is the older 0.3.0 preview and does not contain these bundled tools. In Terminal, switch to the candidate directory and verify:
+1. **Download the ZIP and its matching `.sha256`** from the [0.3.1 (4) Developer Preview release](https://github.com/rayzhudev/nightwing/releases/tag/v0.3.1-dev-preview.1). This preview bundles the media tools; no Homebrew or user-installed tools are needed. In Terminal, switch to the download directory and verify:
 
    ```sh
    shasum -a 256 -c Nightwing-0.3.1-b4-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256

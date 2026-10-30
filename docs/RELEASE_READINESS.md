@@ -1,6 +1,6 @@
-## 0.3.1 (4) local bundled-media candidate readiness
+## 0.3.1 (4) bundled-media Developer Preview readiness
 
-**Local candidate preparation only. Not published, not notarized, no GitHub release asset replacement.** Existing 0.3.0 preview is unchanged. Publication needs a separate explicit instruction.
+**Signed universal Developer Preview, not notarized.** [Download 0.3.1 (4)](https://github.com/rayzhudev/nightwing/releases/tag/v0.3.1-dev-preview.1). Existing 0.3.0 release and assets are unchanged.
 
 ### Scope and evidence
 

@@ -1,4 +1,4 @@
-**Local candidate only: 0.3.1 (4) is not yet published or notarized. The existing 0.3.0 GitHub preview is unchanged.**
+**Developer Preview 0.3.1 (4): signed, universal and unnotarized, with bundled media tools.** The existing 0.3.0 GitHub preview remains available unchanged.
 
 ## What's new in 0.3.1 (4)
 

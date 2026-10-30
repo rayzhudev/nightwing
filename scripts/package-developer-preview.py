@@ -81,7 +81,7 @@ with tempfile.TemporaryDirectory(prefix='nightwing-preview-', dir='/private/tmp'
     shutil.copytree(ROOT / 'docs/Public', package / 'Documentation')
     read_first = '''# Nightwing 0.3.1 (4) — Developer Preview
 
-Locally prepared candidate; NOT published and NOT a production release. Developer ID signed by Ray Zhu
+Developer Preview; NOT a production release. Developer ID signed by Ray Zhu
 (team 6G8K3FNTVJ), NOT notarized; no stapled ticket. Gatekeeper first-open blocking is expected.
 Requires macOS 26.0+; universal arm64/x86_64. Physical Intel hardware was not tested.
 
@@ -97,7 +97,7 @@ See CANDIDATE.json for the embedded source commit (0.3.1 build 4).
 Check the preview ZIP with its adjacent .sha256 file.
 
 Core local playback/imports work offline. Online tools (yt-dlp, CPython, FFmpeg/ffprobe, Node
-and EJS) are bundled, with exact notices, inventory and FFmpeg corresponding source inside the app.
+EJS and certifi) are bundled, with exact notices, inventory and FFmpeg corresponding source inside the app.
 No Homebrew or other user-installed media tools are required.
 Read Documentation/PRIVACY.md before online search, lyrics, downloads, OAuth or optional
 model/runtime provisioning. Back up the application-support directory and original music first.
@@ -106,7 +106,7 @@ No automatic updater. Best-effort non-sensitive issues: https://github.com/rayzh
 Never post credentials, full library data, private paths, playlists or audio in public issues.
 '''
     (package / 'READ-FIRST.md').write_text(read_first)
-    identity = dict(version='0.3.1', build='4', channel='Local Developer Preview candidate',
+    identity = dict(version='0.3.1', build='4', channel='Developer Preview',
                     sourceCommit=SOURCE_COMMIT, buildFromCleanHEAD=True,
                     bundledMediaTools=json.loads((app / 'Contents/Resources/MediaTools/INVENTORY.json').read_text())['versions'],
                     mediaInventorySHA256=sha(app / 'Contents/Resources/MediaTools/INVENTORY.json'),
@@ -114,7 +114,7 @@ Never post credentials, full library data, private paths, playlists or audio in 
                     signature='Developer ID Application: Ray Zhu (6G8K3FNTVJ); hardened runtime; timestamped',
                     notarized=False, stapled=False, gatekeeper='rejected: Unnotarized Developer ID',
                     sealedAppUnchanged=True, bundledDocumentation='matches build source commit and external Documentation',
-                    physicalIntel='not tested', quarantinedFinderFirstOpen='not tested', publication='not performed')
+                    physicalIntel='not tested', quarantinedFinderFirstOpen='not tested', publication='https://github.com/rayzhudev/nightwing/releases/tag/v0.3.1-dev-preview.1')
     (package / 'CANDIDATE.json').write_text(json.dumps(identity, indent=2) + '\n')
     result = DIST / NAME
     run('ditto', '-c', '-k', '--keepParent', str(package), str(result))
