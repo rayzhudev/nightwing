@@ -1,0 +1,29 @@
+## Build and test
+
+Open `Nightwing.xcodeproj` in Xcode and run the **Nightwing macOS** or **Nightwing iOS** scheme. The public preview provides a Mac binary only; the iPhone app is source-only.
+
+For the macOS development loop, double-click `Rebuild Nightwing.command`. It builds a Debug app, replaces the repository-local `Nightwing.app`, and launches it. This does not update `/Applications/Nightwing.app`; the installed app runs independently of this checkout.
+
+### Isolated verification
+
+`xcodebuild -project Nightwing.xcodeproj -scheme "Nightwing macOS" -destination 'platform=macOS,arch=arm64' -parallel-testing-enabled NO test`
+
+The shared test scheme sets NIGHTWING_TEST_MODE=1 before the app host starts. Each test host uses a new temporary support directory, a separate preferences suite and no real Keychain credentials. Test network responses use URLProtocol fixtures (OAuth denial uses a local loopback callback).
+
+For the exact packaged app, set `NIGHTWING_PROFILE_DIRECTORY` to a fresh absolute temporary directory and run its Contents/MacOS/Nightwing macOS executable with `--release-smoke-test`. The app checks real imports/playback/recovery and bundled documentation, writes smoke-result.json there and exits. Optional flags `--provision-lyrics-runtime --download-lyrics-model` also exercise real upstream provisioning into the isolated profile. This is a clean-profile acceptance check, not a claim that a separate macOS user or Intel hardware was tested.
+
+### Packaging
+
+See the [Developer Preview manifest](DEVELOPER_PREVIEW.md) for the preview builder and exact package identity, and [release readiness](RELEASE_READINESS.md) for historical verification and remaining acceptance work. Packaging and publishing are separate operations.
+
+`./Rebuild Nightwing.command --release` is the separate future notarized-release pipeline, not the preview packaging command. It attempts Developer ID signing and Apple notarization and only produces `dist/Nightwing-macOS.zip` on success. The existing notary profile is blocked by a developer-agreement error; this is not a notarized release.
+
+### Reliability and background work
+
+- Library saves keep a validated previous copy in `LocalLibrary.json.backup`. If the main file cannot be decoded, Nightwing preserves it under an `unreadable-…` filename and restores a valid backup. Without a usable backup, saving is blocked and the app shows a recovery notice with Retry.
+- Opening Lyrics queues missing lyrics automatically. One song is processed at a time; explicit requests move ahead of background library work. Pending songs can be cancelled in the lyrics panel, and failed songs can be retried.
+- When online lyric lookup is enabled, existing synced lyrics or instrumental metadata are used before downloading or running the transcription model. Plain lyrics are reused for alignment. Disabling the setting also disables lookup during local generation.
+- macOS watched folders use recursive filesystem notifications with debouncing. A five-minute reconciliation scan remains as a fallback; iPhone uses the periodic fallback.
+- Account disconnect invalidates pending requests. Playlist refresh errors keep the account connected and expose a retry action.
+
+See the [original implementation plan](IMPLEMENTATION_PLAN.md) for product and technical background.

@@ -1,16 +1,17 @@
-## Nightwing 0.3.0 (3) — Developer Preview · macOS · Unnotarized
+## Nightwing 0.3.0 (3) — Developer Preview
 
-**GitHub-only prerelease for opt-in developer evaluation. Not a production-ready release.**
+Local-first music playback with Nightcore controls, local libraries, playlists, queues, watched folders and optional lyrics and YouTube/Spotify playlist connections.
 
-The app is **Developer ID signed by Ray Zhu (6G8K3FNTVJ), NOT notarized**, with no stapled ticket. macOS Gatekeeper blocks first open. A signature is not Apple notarization or a malware clearance. No App Store/TestFlight, iPhone binary or automatic updater is provided.
+> **Mac Developer Preview:** requires **macOS 26+**, Apple Silicon or Intel. Developer ID signed by Ray Zhu, but **not notarized**. First launch requires macOS **Open Anyway**; follow the [short install guide](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/INSTALL.md#install). This is an evaluation build with manual updates, not a production release.
 
-### Download and identity
+### Download and install
+
+Download these two assets from this prerelease:
 
 - `Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip`
-- Matching `Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256`
+- `Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256`
 <!-- GENERATED_IDENTITY -->
-- App: **0.3.0 (3)**. Exact source and SHA-256 are inserted by the preview builder in the published body and recorded in the package identity/checksum.
-- **macOS 26.0+**, universal **Apple Silicon arm64 + Intel x86_64**. Native Apple Silicon and Rosetta tested; physical Intel hardware untested.
+- App: **0.3.0 (3)**. The generated release body and package identity/checksum record the exact source and SHA-256.
 
 Verify in the download directory:
 
@@ -18,29 +19,19 @@ Verify in the download directory:
 shasum -a 256 -c Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256
 ```
 
-Require `OK`. Read the extracted **READ-FIRST.md** and **Documentation/INSTALL.md** before installation. The app is freshly rebuilt from the release source commit and signed; both its bundled and external guides describe this Developer Preview. The historical RC and its obsolete notarized-install wording are not distributed. This preview has **not** been notarized.
+Check for `OK`, unzip and drag **Nightwing.app** to **Applications**, then complete the [first-launch steps](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/INSTALL.md#install). Back up existing Nightwing data and original music before replacing an older app.
 
-### First open on macOS
+### First run and optional features
 
-1. Back up your existing Nightwing data and original music. Unzip, keep your previous app for rollback, and drag the extracted **Nightwing.app** to **Applications**.
-2. Open it once from Finder. Dismiss the “Apple cannot check it for malicious software” / cannot verify it is free of malware dialog with **Done** (or **OK**).
-3. Go to **System Settings > Privacy & Security > Security**, find the Nightwing blocked message and click **Open Anyway** (normally available for about an hour after the attempt). Authenticate if asked, then click **Open** in the confirmation. This creates a deliberate per-app exception.
-4. If policy prevents the exception, or the warning says the app **will damage your computer**, is **damaged**, or its signature is invalid/modified, stop and report the exact warning. Do not disable Gatekeeper or remove quarantine in Terminal.
+Use **Add Files** or **Add Folder**, select a song and try **Nightcore**. Local import/playback works offline without an account or extra tools.
 
-The actual quarantined Finder/Open Anyway interaction remains a manual acceptance item; successful isolated executable smoke tests are not that interaction.
+Online downloads/playback require separately installed yt-dlp, ffmpeg/ffprobe and a supported JavaScript runtime (Deno recommended). With Homebrew already installed: `brew install yt-dlp ffmpeg deno`. Optional local transcription downloads its runtime/model; it does not upload your audio. Online lyrics lookup starts off for new profiles. [Playlist connections](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/CONNECTIONS.md) require your own provider developer clients and import metadata/local matches, not service audio. Only download content you are entitled to use and follow provider terms.
 
-### Features and prerequisites
+### Details and support
 
-Local libraries, playlists/queue, watched folders, Nightcore/speed/pitch playback, backup recovery, optional lyrics/transcription, and optional YouTube/Spotify playlist metadata connections. Service imports match local songs and preserve source links; they do not obtain service audio.
+- [What's new and known limits](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/RELEASE_NOTES.md)
+- [Backup, recovery and uninstall](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/INSTALL.md#backup-and-restore)
+- [Privacy and network access](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/PRIVACY.md) · [Components and attribution](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/THIRD_PARTY_NOTICES.md) · [Licence positioning](https://github.com/rayzhudev/nightwing/blob/main/docs/Public/LICENSE.txt)
+- [Exact preview identity and verification boundaries](https://github.com/rayzhudev/nightwing/blob/main/docs/DEVELOPER_PREVIEW.md)
 
-Core local import/playback works offline. **Online downloads/playback require separately installed yt-dlp, ffmpeg/ffprobe, and a yt-dlp-supported JavaScript runtime** (Deno recommended). With Homebrew already installed: `brew install yt-dlp ffmpeg deno`. These tools are not bundled or installed by Nightwing. OAuth requires your own Google/Spotify developer clients and may have development-mode restrictions. Use only content you are entitled to download and comply with provider terms.
-
-### Privacy, backup and known limits
-
-No Nightwing telemetry/ad SDK or developer-operated upload server. Search/artwork/downloads contact Google and media/CDN hosts; optional lyrics send song metadata to LRCLIB (off for new profiles). Optional local transcription first downloads runtime/packages/models from GitHub/Astral, PyPI and Hugging Face; transcription does not upload your audio. OAuth contacts Google/Spotify and uses a loopback callback; tokens/secrets are stored in device-only Keychain items. Read **Documentation/PRIVACY.md** for network, storage, retention, disconnect and deletion details before enabling online features. Existing preferences survive upgrades.
-
-Quit before backup/restore. Copy the entire `~/Library/Application Support/Nightwing` directory, export/save the `com.rayzhu.nightwing.macos` preferences, and back up original music separately. The JSON is not an audio backup; Keychain items need reconnection. The app restores a validated library backup for a missing/corrupt primary, preserving unreadable data; if neither copy is usable, saving is blocked. Preserve both, restore a known-good backup while quit, reopen and Retry. See **Documentation/INSTALL.md** for rollback, missing originals and uninstall guidance.
-
-Prior audit: 41 isolated tests, native arm64/Rosetta offline playback/codec/recovery checks, and fresh optional runtime/model provisioning/inference passed. Physical Intel hardware, real provider sign-in/revocation and all audio devices remain unverified. Optional dependencies are version-bounded, not fully locked. Online extraction may break with provider changes. No automatic updater, production-support guarantee or project-wide open-source licence is claimed; see **Documentation/LICENSE.txt** and **THIRD_PARTY_NOTICES.md**.
-
-Best-effort non-sensitive bug reports: https://github.com/rayzhudev/nightwing/issues. Include build, ZIP checksum, macOS/architecture, reproduction steps and exact error. Redact credentials, personal paths and playlist data; never attach your full library or audio. No private support intake is configured.
+[Report non-sensitive bugs](https://github.com/rayzhudev/nightwing/issues) with app/macOS version, architecture, ZIP checksum, reproduction steps and exact error. Redact credentials, private paths and playlist data. Support is best-effort; no private support intake is configured. No iPhone binary or project-wide open-source licence is provided.
