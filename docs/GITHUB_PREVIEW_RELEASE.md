@@ -8,8 +8,8 @@ The app is **Developer ID signed by Ray Zhu (6G8K3FNTVJ), NOT notarized**, with 
 
 - `Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip`
 - Matching `Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256`
-- SHA-256: `e356a68939e209445abe273206c9083acfbb5a1790117474ffb4fe8e836d34ab`
-- App: **0.3.0 (3)**, source `4fbd91edb888c477eecd57f5a3c4fefd5fa3546f`.
+<!-- GENERATED_IDENTITY -->
+- App: **0.3.0 (3)**. Exact source and SHA-256 are inserted by the preview builder in the published body and recorded in the package identity/checksum.
 - **macOS 26.0+**, universal **Apple Silicon arm64 + Intel x86_64**. Native Apple Silicon and Rosetta tested; physical Intel hardware untested.
 
 Verify in the download directory:
@@ -18,7 +18,7 @@ Verify in the download directory:
 shasum -a 256 -c Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip.sha256
 ```
 
-Require `OK`. Read the extracted **READ-FIRST.md** and **Documentation/INSTALL.md** before installation. The sealed app is the unchanged signed candidate; its older in-app install guide incorrectly describes the planned notarized release. The external Developer Preview instructions supersede that wording. This preview has **not** been notarized.
+Require `OK`. Read the extracted **READ-FIRST.md** and **Documentation/INSTALL.md** before installation. The app is freshly rebuilt from the release source commit and signed; both its bundled and external guides describe this Developer Preview. The historical RC and its obsolete notarized-install wording are not distributed. This preview has **not** been notarized.
 
 ### First open on macOS
 

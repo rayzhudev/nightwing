@@ -43,7 +43,7 @@ OAuth access and refresh tokens are stored in the macOS Keychain as device-only 
 
 The current plan is a **GitHub Releases prerelease only**, with no App Store, TestFlight, automatic updater, or other distribution channel. Nothing has been uploaded or published by this preparation.
 
-The [Developer Preview manifest](docs/DEVELOPER_PREVIEW.md) identifies the exact 0.3.0 (3) signed, unnotarized app and its checksums. `python3 scripts/package-developer-preview.py` locally wraps that existing candidate with current documentation; it does not rebuild, resign, submit to Apple, or publish anything. The sealed app is unchanged. Its older in-app install guide incorrectly describes the intended notarized release: the external **READ-FIRST.md** and **Documentation/INSTALL.md** in the preview package supersede it.
+The [Developer Preview manifest](docs/DEVELOPER_PREVIEW.md) describes the 0.3.0 (3) signed, unnotarized package. `python3 scripts/package-developer-preview.py` builds the current clean commit, embeds its identity, signs with Developer ID and packages matching bundled/external guides. It does not submit to Apple or publish anything. The generated release body, package identity and checksum identify the exact release assets. No notarization is claimed.
 
 `./Rebuild Nightwing.command --release` is the separate **future notarized-release** pipeline. It attempts Developer ID signing and Apple notarization and produces `dist/Nightwing-macOS.zip` only on success; it is **not** how this preview was prepared. The existing Apple notary profile is blocked by a developer-agreement error. No accepted notarization or stapled ticket is claimed for this preview.
 

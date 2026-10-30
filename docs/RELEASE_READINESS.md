@@ -1,16 +1,12 @@
 ## 0.3.0 (3) Developer Preview readiness
 
-**GO for a GitHub prerelease draft only**, using the exact wrapper/checksum in [DEVELOPER_PREVIEW.md](DEVELOPER_PREVIEW.md) and the proposed [public release body](GITHUB_PREVIEW_RELEASE.md). No release, tag, upload, push, distribution or other public external write has been performed. Publishing requires separate authorisation.
+**GO for the user-authorised GitHub-only public prerelease**, using the freshly rebuilt wrapper/checksum and generated release body described in [DEVELOPER_PREVIEW.md](DEVELOPER_PREVIEW.md). This is not production/general-availability approval.
 
-### Verified preparation
+### Release build verification
 
-- [x] Existing app source commit `4fbd91edb888c477eecd57f5a3c4fefd5fa3546f`, version 0.3.0 (3), original ZIP SHA-256 pinned.
-- [x] Valid timestamped Developer ID Application signature (Ray Zhu, team 6G8K3FNTVJ), hardened runtime, macOS 26.0+ arm64/x86_64 slices; no bundled yt-dlp.
-- [x] Expected actual state checked: **not notarized, no stapled ticket, Gatekeeper rejected as Unnotarized Developer ID**.
-- [x] Preview wrapper includes unchanged signed app plus current external install/first-open, privacy/network/retention, backup/recovery/uninstall, licence, attribution and release documentation.
-- [x] Preview disclosures explicitly supersede obsolete notarized-install wording inside the sealed app. No rebuild or resign; exact extracted app bytes/modes and signature verified against the original.
-- [x] SHA-256 sidecar uses the preview ZIP basename. Exact preview hash appears in manifest and proposed release body. Generated evidence: `dist/DEVELOPER-PREVIEW-VERIFICATION.json`.
-- [x] GitHub-only opt-in prerelease positioning, externally installed online tools, best-effort issue path, no updater/production-readiness claim.
+The preview builder requires a clean committed source tree and records its full commit, version 0.3.0 (3), exact ZIP SHA-256 and verification outcome in ignored `dist/DEVELOPER-PREVIEW-VERIFICATION.json`. It verifies timestamped Developer ID signature (Ray Zhu, team 6G8K3FNTVJ), hardened runtime, macOS 26.0+ arm64/x86_64 slices, no bundled yt-dlp, matching bundled/external guides, expected unnotarized Gatekeeper rejection/no ticket and exact extracted app bytes/modes. These checks run against the new build; historical functional results below are not represented as freshly rerun.
+
+The freshly built app replaces the old RC. Both in-app and external guides now describe the unnotarized preview. Only the final ZIP and checksum are release assets; no updater/production-readiness claim is made.
 
 ### Completed audit/remediation, not rerun in this documentation/package task
 
@@ -30,6 +26,6 @@ These are disclosed preview limitations, not passed production acceptance gates.
 
 ### Separate future notarized-release path
 
-Apple notarytool previously returned HTTP 403 because a required developer agreement is missing/expired. No agreement, account, identity or credentials were changed here. `./Rebuild Nightwing.command --release` remains the future clean-commit signed/notarized release builder, not the preview packaging command. After an authorised owner resolves that issue, a new accepted/stapled candidate and exact quarantined Gatekeeper/Launch Services verification are required before claiming a notarized release. The existing `scripts/verify-candidate.sh` compares current bundled docs and is for a newly built candidate; do not use it to reinterpret the unchanged historical preview app as notarized or document-current.
+Apple notarytool previously returned HTTP 403 because a required developer agreement is missing/expired. No agreement, account, identity or credentials were changed here. `./Rebuild Nightwing.command --release` remains the future clean-commit signed/notarized release builder, not the preview packaging command. After an authorised owner resolves that issue, a new accepted/stapled candidate and exact quarantined Gatekeeper/Launch Services verification are required before claiming a notarized release. The preview builder intentionally does not run notarytool; no credentials or account agreements are changed.
 
-Before any eventual external action, verify the exact local preview checksum, inspect the proposed release body/asset boundary, and keep the GitHub release **draft/prerelease, not latest production** as authorised. Do not upload private QA artifacts or the bare original RC ZIP.
+Before publication, verify the exact local preview checksum and generated release body. Keep the GitHub release **prerelease, not latest production**. Do not upload private QA artifacts or the bare original RC ZIP.

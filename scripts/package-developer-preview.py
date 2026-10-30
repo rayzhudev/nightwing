@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Locally wrap the fixed signed candidate with external preview disclosures; no signing/upload."""
+"""Build/sign current clean HEAD and package an explicitly unnotarized preview; no upload."""
 import hashlib
 import json
 import plistlib
@@ -10,9 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / 'dist'
-SOURCE = DIST / 'Nightwing-0.3.0-b3-UNNOTARIZED-RC.zip'
-SOURCE_SHA = 'f84713bc6621c3863e74093a5b2362316cf45b6d721a22df0374c581e027de11'
-SOURCE_COMMIT = '4fbd91edb888c477eecd57f5a3c4fefd5fa3546f'
+SOURCE_COMMIT = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
 NAME = 'Nightwing-0.3.0-b3-DEVELOPER-PREVIEW-UNNOTARIZED.zip'
 
 def run(*args, check=True):
@@ -33,14 +31,29 @@ def inventory(directory):
             else ('file', sha(p), p.stat().st_mode & 0o777))
             for p in directory.rglob('*') if p.is_symlink() or p.is_file()}
 
-require(sha(SOURCE) == SOURCE_SHA, 'Original candidate checksum changed; review required')
+require(not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=normal'], cwd=ROOT),
+        'Preview builds require a clean committed tree')
+DIST.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='nightwing-preview-', dir='/private/tmp') as temporary:
     work = Path(temporary)
-    original = work / 'original'
     package = work / 'Nightwing-Developer-Preview'
     package.mkdir()
-    run('ditto', '-x', '-k', str(SOURCE), str(original))
-    app = original / 'Nightwing.app'
+    archive = work / 'Nightwing.xcarchive'
+    build = run('xcodebuild', '-project', str(ROOT / 'Nightwing.xcodeproj'),
+                '-scheme', 'Nightwing macOS', '-configuration', 'Release',
+                '-derivedDataPath', str(work / 'DerivedData'), '-archivePath', str(archive),
+                'DEVELOPMENT_TEAM=6G8K3FNTVJ',
+                'CODE_SIGN_IDENTITY=Developer ID Application: Ray Zhu (6G8K3FNTVJ)',
+                'CODE_SIGN_STYLE=Manual', 'ENABLE_CODE_COVERAGE=NO', 'CLANG_COVERAGE_MAPPING=NO',
+                'DEAD_CODE_STRIPPING=YES', 'ONLY_ACTIVE_ARCH=NO', 'ARCHS=arm64 x86_64', 'archive', check=False)
+    (DIST / 'DEVELOPER-PREVIEW-BUILD.log').write_text(build.stdout)
+    require(build.returncode == 0, 'Archive failed; see dist/DEVELOPER-PREVIEW-BUILD.log')
+    app = work / 'Nightwing.app'
+    run('ditto', str(archive / 'Products/Applications/Nightwing macOS.app'), str(app))
+    run('/usr/libexec/PlistBuddy', '-c', f'Add :NightwingSourceCommit string {SOURCE_COMMIT}',
+        str(app / 'Contents/Info.plist'))
+    run('codesign', '--force', '--options', 'runtime', '--timestamp', '--sign',
+        'Developer ID Application: Ray Zhu (6G8K3FNTVJ)', str(app))
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     require((info['CFBundleShortVersionString'], info['CFBundleVersion'], info['NightwingSourceCommit'],
              info['LSMinimumSystemVersion']) == ('0.3.0', '3', SOURCE_COMMIT, '26.0'), 'Unexpected app identity')
@@ -51,11 +64,11 @@ with tempfile.TemporaryDirectory(prefix='nightwing-preview-', dir='/private/tmp'
             and 'Timestamp=' in signature, 'Unexpected signing state')
     run('lipo', str(app / 'Contents/MacOS/Nightwing macOS'), '-verify_arch', 'arm64', 'x86_64')
     require(not (app / 'Contents/Resources/yt-dlp').exists(), 'Unexpected bundled downloader')
-    # Preserve all five signed documents exactly as recorded in the original source commit.
+    # Verify all five bundled documents against the clean build commit.
     for name in ('INSTALL.md', 'RELEASE_NOTES.md', 'PRIVACY.md', 'THIRD_PARTY_NOTICES.md', 'LICENSE.txt'):
         expected = subprocess.check_output(['git', 'show', f'{SOURCE_COMMIT}:docs/Public/{name}'], cwd=ROOT)
         require((app / 'Contents/Resources/Public' / name).read_bytes() == expected,
-                f'Original bundled document changed: {name}')
+                f'Bundled document differs from build commit: {name}')
     gatekeeper = run('spctl', '--assess', '--type', 'execute', '--verbose=4', str(app), check=False)
     require(gatekeeper.returncode != 0 and 'Unnotarized Developer ID' in gatekeeper.stdout,
             f'Unexpected Gatekeeper result: {gatekeeper.stdout}')
@@ -74,14 +87,12 @@ Read Documentation/INSTALL.md BEFORE opening or replacing an installed app. It c
 System Settings > Privacy & Security > Open Anyway first-open procedure, prerequisites,
 backup/recovery, known limits and support path. Do not disable Gatekeeper or remove quarantine.
 
-IMPORTANT: Nightwing.app is the unchanged signed candidate. Its bundled Privacy & Help install
-guide describes an intended notarized beta and is obsolete for this Developer Preview.
-Documentation/INSTALL.md and this notice supersede that wording. No notarization is claimed.
+IMPORTANT: Nightwing.app was rebuilt from the clean source commit recorded in CANDIDATE.json,
+then Developer ID signed. Bundled and external guides both describe this unnotarized preview.
+No notarization is claimed. The earlier historical RC is NOT the released app.
 
-The app embedded source commit is 4fbd91edb888c477eecd57f5a3c4fefd5fa3546f (0.3.0 build 3).
-Original candidate ZIP SHA-256: f84713bc6621c3863e74093a5b2362316cf45b6d721a22df0374c581e027de11
-See CANDIDATE.json for the package identity. Check the OUTER preview ZIP with its adjacent
-.sha256 file; the original candidate hash above is not the outer ZIP's checksum.
+See CANDIDATE.json for the embedded source commit (0.3.0 build 3).
+Check the preview ZIP with its adjacent .sha256 file.
 
 Core local playback/imports work offline. Online downloads require separately installed yt-dlp,
 ffmpeg/ffprobe and supported JavaScript runtime (Deno recommended); these are NOT bundled.
@@ -93,12 +104,11 @@ Never post credentials, full library data, private paths, playlists or audio in 
 '''
     (package / 'READ-FIRST.md').write_text(read_first)
     identity = dict(version='0.3.0', build='3', channel='GitHub-only Developer Preview',
-                    sourceCommit=SOURCE_COMMIT, originalCandidate=SOURCE.name,
-                    originalCandidateSHA256=SOURCE_SHA,
+                    sourceCommit=SOURCE_COMMIT, buildFromCleanHEAD=True,
                     architectures=['arm64', 'x86_64'], minimumMacOS='26.0',
                     signature='Developer ID Application: Ray Zhu (6G8K3FNTVJ); hardened runtime; timestamped',
                     notarized=False, stapled=False, gatekeeper='rejected: Unnotarized Developer ID',
-                    sealedAppUnchanged=True, bundledDocumentation='historical; external Documentation supersedes install/release wording',
+                    sealedAppUnchanged=True, bundledDocumentation='matches build source commit and external Documentation',
                     physicalIntel='not tested', quarantinedFinderFirstOpen='not tested', publication='not performed')
     (package / 'CANDIDATE.json').write_text(json.dumps(identity, indent=2) + '\n')
     result = DIST / NAME
@@ -112,6 +122,14 @@ Never post credentials, full library data, private paths, playlists or audio in 
     checksum = sha(result)
     (DIST / (NAME + '.sha256')).write_text(f'{checksum}  {NAME}\n')
     identity.update(previewZIP=NAME, previewZIP_SHA256=checksum,
-                    verification='source hash, identity, signature, universal slices, original docs, exact extracted bytes/modes and current external docs passed')
+                    verification='clean HEAD build, identity, signature, universal slices, bundled docs, exact extracted bytes/modes and current external docs passed')
     (DIST / 'DEVELOPER-PREVIEW-VERIFICATION.json').write_text(json.dumps(identity, indent=2) + '\n')
+    require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip() == SOURCE_COMMIT,
+            'HEAD changed during packaging')
+    require(not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=normal'], cwd=ROOT),
+            'Working tree changed during packaging')
+    body = (ROOT / 'docs/GITHUB_PREVIEW_RELEASE.md').read_text()
+    body = body.replace('<!-- GENERATED_IDENTITY -->',
+                        f'- SHA-256: `{checksum}`\n- App source commit: `{SOURCE_COMMIT}`.')
+    (DIST / 'GITHUB-PREVIEW-RELEASE.md').write_text(body)
     print(json.dumps(identity, indent=2))
