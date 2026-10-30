@@ -1,9 +1,41 @@
 #if canImport(XCTest) && canImport(Nightwing_macOS)
 import AVFoundation
+import AppKit
+import SwiftUI
 import XCTest
 @testable import Nightwing_macOS
 
 final class CoreRegressionTests: XCTestCase {
+    func testDefaultAccentMatchesMacOSInsteadOfForcingBlue() throws {
+        XCTAssertTrue(NightwingEnvironment.isIsolated)
+        let defaults = NightwingEnvironment.defaults
+        let previous = defaults.object(forKey: "nightwing.accentColor")
+        defer { if let previous { defaults.set(previous, forKey: "nightwing.accentColor") } else { defaults.removeObject(forKey: "nightwing.accentColor") } }
+        defaults.removeObject(forKey: "nightwing.accentColor")
+        XCTAssertEqual(defaults.string(forKey: "nightwing.accentColor"), NightwingAccent.system.rawValue)
+        let actual = try XCTUnwrap(NSColor(NightwingTheme.action).usingColorSpace(.sRGB))
+        let expected = try XCTUnwrap(NSColor.controlAccentColor.usingColorSpace(.sRGB))
+        XCTAssertEqual(actual.redComponent, expected.redComponent, accuracy: 0.001)
+        XCTAssertEqual(actual.greenComponent, expected.greenComponent, accuracy: 0.001)
+        XCTAssertEqual(actual.blueComponent, expected.blueComponent, accuracy: 0.001)
+    }
+
+    func testExplicitAccentOverrideIsPreserved() throws {
+        XCTAssertTrue(NightwingEnvironment.isIsolated)
+        let defaults = NightwingEnvironment.defaults
+        let previous = defaults.object(forKey: "nightwing.accentColor")
+        defer { if let previous { defaults.set(previous, forKey: "nightwing.accentColor") } else { defaults.removeObject(forKey: "nightwing.accentColor") } }
+        for chosen in [NightwingAccent.green, .purple] {
+            defaults.set(chosen.rawValue, forKey: "nightwing.accentColor")
+            let actual = try XCTUnwrap(NSColor(NightwingTheme.action).usingColorSpace(.sRGB))
+            let expected = try XCTUnwrap(NSColor(chosen.color).usingColorSpace(.sRGB))
+            XCTAssertEqual(actual.redComponent, expected.redComponent, accuracy: 0.001)
+            XCTAssertEqual(actual.greenComponent, expected.greenComponent, accuracy: 0.001)
+            XCTAssertEqual(actual.blueComponent, expected.blueComponent, accuracy: 0.001)
+            XCTAssertEqual(defaults.string(forKey: "nightwing.accentColor"), chosen.rawValue)
+        }
+    }
+
     func testAlbumDownloadErrorSurvivesPlaylistCompletionMessage() {
         let output = """
         ERROR: unable to download video data: HTTP Error 403: Forbidden

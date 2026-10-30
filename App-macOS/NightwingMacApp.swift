@@ -14,10 +14,10 @@ struct NightwingMacApp: App {
             "nightwing.restorePlaybackOnLaunch": true,
             "nightwing.automaticallyLookupSyncedLyrics": false,
             "nightwing.defaultVolume": 0.85,
-            "nightwing.accentColor": NightwingAccent.blue.rawValue
+            "nightwing.accentColor": NightwingAccent.system.rawValue
         ])
         if NightwingEnvironment.defaults.string(forKey: "nightwing.accentColor") == "defaultAccent" {
-            NightwingEnvironment.defaults.set(NightwingAccent.blue.rawValue, forKey: "nightwing.accentColor")
+            NightwingEnvironment.defaults.set(NightwingAccent.system.rawValue, forKey: "nightwing.accentColor")
         }
     }
 
@@ -48,12 +48,14 @@ private struct NightwingSettingsView: View {
     @AppStorage("nightwing.automaticallyLookupSyncedLyrics", store: NightwingEnvironment.defaults) private var automaticallyLookupSyncedLyrics = false
     @AppStorage("nightwing.defaultVolume", store: NightwingEnvironment.defaults) private var defaultVolume = 0.85
     @AppStorage("nightwing.recentSearches", store: NightwingEnvironment.defaults) private var recentSearchesData = ""
-    @AppStorage("nightwing.accentColor", store: NightwingEnvironment.defaults) private var accentColor = NightwingAccent.blue.rawValue
+    @AppStorage("nightwing.accentColor", store: NightwingEnvironment.defaults) private var accentColor = NightwingAccent.system.rawValue
 
     var body: some View {
         TabView {
             Form {
                 Section("Theme") {
+                    Text("System uses your macOS accent colour. Choose another colour to override it.")
+                        .font(.caption).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .top, spacing: 14) {
                             Text("Colour")
@@ -190,6 +192,7 @@ private struct NightwingSettingsView: View {
             PublicBetaHelpView()
                 .tabItem { Label("Privacy & Help", systemImage: "hand.raised") }
         }
+        .tint(NightwingTheme.action)
         .frame(width: 680, height: 520)
     }
 

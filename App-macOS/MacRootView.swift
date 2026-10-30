@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct MacRootView: View {
     @EnvironmentObject private var appModel: NightwingAppModel
-    @AppStorage("nightwing.accentColor", store: NightwingEnvironment.defaults) private var accentColor = NightwingAccent.blue.rawValue
+    @AppStorage("nightwing.accentColor", store: NightwingEnvironment.defaults) private var accentColor = NightwingAccent.system.rawValue
 
     @State private var selection: MacSidebarSelection = .home
     @State private var searchText = ""

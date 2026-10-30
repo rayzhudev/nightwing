@@ -17,6 +17,9 @@ mkdir -p "$qa_root/extracted" "$qa_root/offline/fixtures" "$qa_root/gui/fixtures
 shasum -a 256 "$zip_path" > "$evidence_dir/zip.sha256"
 ditto -x -k "$zip_path" "$qa_root/extracted"
 app="$qa_root/extracted/Nightwing.app"
+if [[ ! -d "$app" && -d "$qa_root/extracted/Nightwing-Developer-Preview/Nightwing.app" ]]; then
+  app="$qa_root/extracted/Nightwing-Developer-Preview/Nightwing.app"
+fi
 binary="$app/Contents/MacOS/Nightwing macOS"
 codesign --verify --deep --strict --verbose=2 "$app" > "$evidence_dir/signature.txt" 2>&1
 codesign -dvv "$app" >> "$evidence_dir/signature.txt" 2>&1

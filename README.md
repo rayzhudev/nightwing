@@ -6,13 +6,14 @@ Local-first music playback with a Nightcore twist. Built with SwiftUI for macOS 
 
 > **Developer Preview · 0.3.0 (3)** — Requires **macOS 26+**, on Apple Silicon or Intel. The app is Developer ID signed but **not notarized**. For the first launch, use macOS **Open Anyway** as described in the [short install guide](docs/Public/INSTALL.md#install). This is an evaluation build; updates are installed manually. No iPhone binary is available yet.
 
-## Your music, your pace
+## Features
 
-- **Nightcore, built in.** Nightcore is a music genre which speeds up music by sqrt(2), resulting in a pitch shift of +6 semitones. Nightwing also allows speed and pitch to be adjusted.
-- **A local library that stays yours.** Albums, playlists, queues, watched folders and FLAC support. Imported audio is referenced in place, not modified.
-- **Discover and play.** Browse YouTube Music, preview albums and optionally download audio on macOS with the bundled media tools (current 0.3.1 candidate).
-- **Lyrics when you want them.** Synced lyrics from LRCLIB, or optional on-device transcription on macOS. Online lyric lookup starts off for new profiles.
-- **Bring your playlists.** Optional YouTube/YouTube Music and Spotify connections import playlist metadata, match local songs and preserve source links—not service audio.
+- **Nightcore Playback.** Increase playback speed by √2 for a +6-semitone pitch shift, or adjust speed and pitch independently.
+- **Local Library Playback.** Play imported audio files and folders, including FLAC, with albums, playlists, queues and watched folders. Original audio files are not modified.
+- **Download Songs from YouTube Music.** Search for songs and albums, download audio, and play it in Nightwing on macOS.
+- On-Device Generated Lyrics. On-device transcription on macOS using the Whisper Small model (Systran/faster-whisper-small). Synced lyrics from LRCLIB when available.
+- **Import YouTube and Spotify Playlists.** Import playlist metadata, match songs to your local library, and retain source links.
+- **macOS Accent Colour.** Controls, highlights and selection use your macOS accent colour by default. Choose a custom colour in Settings > Appearance.
 
 ## Get started
 

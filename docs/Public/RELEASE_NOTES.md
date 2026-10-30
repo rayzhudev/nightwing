@@ -11,6 +11,7 @@ Changes since 0.2.0:
 - **Better lyrics workflow:** serial, cancellable generation with priority/retry controls; reuse of synced/plain lyrics and instrumental metadata when lookup is enabled.
 - **Library and playback improvements:** recursive watched-folder updates, imported-playlist refresh, queue/bookmark handling, playback progress and download diagnostics.
 - **Privacy & Help settings:** privacy, attribution, licensing, installation and recovery guides. Online lyric lookup defaults off for new profiles.
+- **System accent colour:** macOS controls, highlights and selection now use the live system accent by default; saved custom colours are preserved. This is not a change to the app’s dark background theme.
 - **Optional online tools:** downloads use bundled universal yt-dlp, CPython, FFmpeg/ffprobe, Node and EJS; no Homebrew setup is required. Tool updates come only with a replacement app. Exact inventory, notices and required corresponding source accompany the app. On-device transcription remains available on demand.
 
 ### Before installing
